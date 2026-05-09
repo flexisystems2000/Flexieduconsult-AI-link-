@@ -1,8 +1,8 @@
+require('dotenv').config(); // Load environment variables
 const express = require("express");
 const axios = require("axios");
 
 const app = express();
-// Use 3000 as a fallback if process.env.PORT is not defined
 const PORT = process.env.PORT || 3000;
 
 app.get("/", (req, res) => {
@@ -34,16 +34,16 @@ app.get("/ai", async (req, res) => {
         }
 
         const response = await axios.post(
+            // FIXED: Added {apiKey} inside the template literal
             `https://generativelanguage.googleapis.com/v1/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
             {
                 contents: [{
                     parts: [{ text: prompt }]
                 }]
             },
-            { timeout: 30000 } // 30-second timeout
+            { timeout: 30000 } 
         );
 
-        // Safely extract the text from the response nested structure
         const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         if (!result) {
@@ -59,9 +59,7 @@ app.get("/ai", async (req, res) => {
         });
 
     } catch (err) {
-        // Log detailed error for the developer, but send a clean message to the user
         console.error("AI ERROR:", err.response?.data || err.message);
-
         const statusCode = err.response?.status || 500;
         const errorMessage = err.response?.data?.error?.message || "AI request failed";
 
