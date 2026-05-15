@@ -5,82 +5,85 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// --- CONFIGURATION ---
-// Add your multiple API keys here
+// 1. ADD MIDDLEWARE: Required to read the JSON body from JARVIS
+app.use(express.json({ limit: '10mb' })); 
+
 const API_KEYS = [
     process.env.GEMINI_API_KEY_1,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3
-].filter(key => key); // Removes any empty/undefined keys
+].filter(key => key);
 
 let currentKeyIndex = 0;
 
 app.get("/", (req, res) => {
-    res.send("🤖 Flexi-AI Core is online with Multi-Key Rotation!");
+    res.send("🤖 Flexi-AI Multimodal Core is online!");
 });
 
-app.get("/ai", async (req, res) => {
-    const userPrompt = req.query.q;
+// 2. CHANGE TO POST: To accept both 'prompt' and 'image' data
+app.post("/ai", async (req, res) => {
+    const { prompt, image } = req.body; // Extract from JARVIS POST request
 
-    if (!userPrompt) {
-        return res.status(400).json({ success: false, error: "Missing query parameter 'q'." });
+    if (!prompt && !image) {
+        return res.status(400).json({ success: false, error: "No prompt or image provided." });
     }
 
-    // 1. MATH & OUTPUT INSTRUCTION
-    // This forces Gemini to avoid LaTeX and use WhatsApp-friendly symbols
     const systemInstruction = 
         "CRITICAL: Use Unicode symbols (√, ±, ², ³, ≈, ÷). " +
-        "Represent fractions as 'a/b' or using horizontal lines. " +
-        "NO LaTeX ($ or \\frac). Response for WhatsApp bot JARVIS AI.";
+        "Represent fractions as 'a/b'. NO LaTeX. JARVIS AI Response.";
 
-    const finalPrompt = `${systemInstruction}\n\nUser Question: ${userPrompt}`;
+    const finalPrompt = `${systemInstruction}\n\nUser Question: ${prompt || "Analyze this image."}`;
 
-    // 2. RECURSIVE FUNCTION TO HANDLE ROTATION
+    // 3. RESTRUCTURE FOR MULTIMODAL DATA
     async function fetchWithRotation(index) {
         if (index >= API_KEYS.length) {
-            throw new Error("All API keys exhausted or rate-limited.");
+            throw new Error("All API keys exhausted.");
         }
 
         try {
             const apiKey = API_KEYS[index];
+            
+            // Build the parts array
+            const parts = [{ text: finalPrompt }];
+            
+            // If an image was sent, add it to the parts array
+            if (image) {
+                parts.push({
+                    inline_data: {
+                        mime_type: "image/jpeg",
+                        data: image // Base64 string from JARVIS
+                    }
+                });
+            }
+
             const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-                { contents: [{ parts: [{ text: finalPrompt }] }] },
-                { timeout: 25000 }
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                { contents: [{ parts: parts }] },
+                { timeout: 30000 }
             );
 
             return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
 
         } catch (err) {
             const isRateLimit = err.response?.status === 429;
-            
             if (isRateLimit && index < API_KEYS.length - 1) {
-                console.log(`⚠️ Key ${index} Limited. Rotating to Key ${index + 1}...`);
-                currentKeyIndex = index + 1; // Update global index for next global request
+                console.log(`⚠️ Rotating Key...`);
+                currentKeyIndex = index + 1;
                 return fetchWithRotation(index + 1);
             }
-            throw err; // Pass error up if no more keys or different error
+            throw err;
         }
     }
 
     try {
         const result = await fetchWithRotation(currentKeyIndex);
-
-        if (!result) {
-            return res.json({ success: false, error: "Empty response from AI." });
-        }
-
         return res.json({ success: true, result: result });
-
     } catch (err) {
         console.error("FINAL ERROR:", err.message);
-        return res.status(500).json({
-            success: false,
-            error: "Service temporarily unavailable. Please try again."
-        });
+        return res.status(500).json({ success: false, error: "AI service error." });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Flexi-AI is running on port ${PORT} with ${API_KEYS.length} keys.`);
+    console.log(`🚀 Flexi-AI Multimodal is running on port ${PORT}`);
 });
