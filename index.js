@@ -35,7 +35,7 @@ async function callGemini(contents) {
 
         try {
             const res = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
                 { contents },
                 { timeout: 45000 }
             );
