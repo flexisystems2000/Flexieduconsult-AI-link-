@@ -1,119 +1,208 @@
-require('dotenv').config();
+require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
+const pdfParse = require("pdf-parse");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1. MIDDLEWARE: Support for large student files and high-res images
-app.use(express.json({ limit: '30mb' })); 
-app.use(express.urlencoded({ extended: true, limit: '30mb' }));
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({ extended: true, limit: "15mb" }));
 
-// 2. API KEY ROTATION: Keeps JARVIS running even if one key hits a limit
+// ---------------- API KEYS ----------------
 const API_KEYS = [
     process.env.GEMINI_API_KEY_1,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3
-].filter(key => key);
+].filter(Boolean);
 
-let currentKeyIndex = 0;
+let keyIndex = 0;
 
-const getApiKey = () => {
-    if (API_KEYS.length === 0) throw new Error("No API keys found in Render Environment.");
-    const key = API_KEYS[currentKeyIndex];
-    currentKeyIndex = (currentKeyIndex + 1) % API_KEYS.length;
+const getNextKey = () => {
+    if (API_KEYS.length === 0) throw new Error("No Gemini API keys");
+
+    const key = API_KEYS[keyIndex];
+    keyIndex = (keyIndex + 1) % API_KEYS.length;
     return key;
 };
 
-// 3. NIGERIA TIME HELPER
+// ---------------- GEMINI CALL ----------------
+async function callGemini(contents) {
+    let lastError;
+
+    for (let i = 0; i < API_KEYS.length; i++) {
+        const key = getNextKey();
+
+        try {
+            const res = await axios.post(
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+                { contents },
+                { timeout: 45000 }
+            );
+
+            return res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        } catch (err) {
+            lastError = err;
+        }
+    }
+
+    throw new Error(lastError?.message || "Gemini failed");
+}
+
+// ---------------- OCR ----------------
+async function ocrSpace(fileBase64) {
+    try {
+        const clean = fileBase64.replace(/^data:.*?;base64,/, "");
+
+        const formData = new URLSearchParams();
+        formData.append("base64Image", clean);
+        formData.append("language", "eng");
+        formData.append("OCREngine", "2");
+
+        const res = await axios.post(
+            "https://api.ocr.space/parse/image",
+            formData,
+            {
+                headers: {
+                    apikey: process.env.OCR_API_KEY,
+                    "Content-Type": "application/x-www-form-urlencoded"
+                },
+                timeout: 30000
+            }
+        );
+
+        return res.data?.ParsedResults?.map(r => r.ParsedText).join("\n")?.trim() || "";
+    } catch (err) {
+        return "";
+    }
+}
+
+// ---------------- TIME ----------------
 const getNigeriaTime = () => {
-    return new Intl.DateTimeFormat('en-GB', {
-        timeZone: 'Africa/Lagos',
-        day: '2-digit', month: 'long', year: 'numeric',
-        hour: '2-digit', minute: '2-digit', second: '2-digit', hour12: true
+    return new Intl.DateTimeFormat("en-GB", {
+        timeZone: "Africa/Lagos",
+        day: "2-digit",
+        month: "long",
+        year: "numeric",
+        hour: "2-digit",
+        minute: "2-digit",
+        hour12: true
     }).format(new Date());
 };
 
-// 4. MIME-TYPE DETECTOR: Smart detection for WhatsApp media
-const getMimeType = (base64String) => {
-    if (base64String.startsWith("JVBERi0")) return "application/pdf";
-    if (base64String.startsWith("iVBORw0KGgo")) return "image/png";
-    return "image/jpeg"; 
-};
-
-// --- ROUTES ---
-
+// ---------------- HOME ----------------
 app.get("/", (req, res) => {
-    res.send(`<h1>🤖 JARVIS AI Core Online</h1><p><b>WAT:</b> ${getNigeriaTime()}</p><p>Status: All Systems Functional</p>`);
+    res.send(`<h1>🤖 JARVIS CORE</h1><p>ONLINE</p><p>${getNigeriaTime()}</p>`);
 });
 
-// MAIN API: Handles Text, Math (No LaTeX), Docs, and Vision
+// =====================================================
+// 1. AI ROUTE
+// =====================================================
 app.post("/ai", async (req, res) => {
-    const { prompt, image } = req.body;
     try {
-        const system = `Respond as JARVIS for Flexi Digital Academy. Nigeria Time: ${getNigeriaTime()}. ` +
-                       `CRITICAL: NO LATEX code. Use Unicode (√, ±, ², ³, ≈, ÷, π, Δ, θ). Fractions as 'a/b'. ` +
-                       `Explain like a friendly, professional tutor.`;
-        
-        const key = getApiKey();
-        const parts = [{ text: `${system}\n\nUser: ${prompt || "Check this for me."}` }];
-        
+        const { prompt, image } = req.body;
+
+        const parts = [
+            {
+                text:
+                    `You are JARVIS for Flexi Digital Academy. ` +
+                    `Be educational. NO LATEX. Use √ π ± ² ³.\n\nUser: ${prompt || "Analyze this"}`
+            }
+        ];
+
         if (image) {
-            const cleanBase64 = image.replace(/^data:.*?;base64,/, "");
             parts.push({
                 inline_data: {
-                    mime_type: getMimeType(cleanBase64),
-                    data: cleanBase64
+                    mime_type: "image/jpeg",
+                    data: image.replace(/^data:.*?;base64,/, "")
                 }
             });
         }
 
-        // FIXED: The full corrected Google API URL for 2026
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-            { contents: [{ parts: parts }] }
-        );
+        const result = await callGemini([{ parts }]);
 
-        const resultText = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        if (!resultText) throw new Error("Empty response from AI.");
+        res.json({ success: true, result: result || "No response" });
 
-        res.json({ success: true, result: resultText });
     } catch (err) {
-        console.error("AI Error Details:", err.response?.data || err.message);
-        res.status(500).json({ success: false, error: "JARVIS is slightly overwhelmed. Try again in 5 seconds." });
+        res.status(500).json({ success: false, error: "AI failed" });
     }
 });
 
-// BROWSER TEST: Quickly verify math translation without WhatsApp
-// Visit: your-link.com/test/Solve (x+2)(x-2)
-app.get("/test/:query", async (req, res) => {
+// =====================================================
+// 2. IMAGE ROUTE
+// =====================================================
+app.get("/image", (req, res) => {
+    const prompt = req.query.prompt;
+
+    if (!prompt) {
+        return res.status(400).json({
+            success: false,
+            error: "Prompt required"
+        });
+    }
+
+    res.json({
+        success: true,
+        image: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`
+    });
+});
+
+// =====================================================
+// 3. PDF ROUTE (SMART + OCR)
+// =====================================================
+app.post("/pdf", async (req, res) => {
     try {
-        const query = req.params.query;
-        const key = getApiKey();
-        const sys = "NO LATEX. Use Unicode symbols like ², √, π. Solve clearly.";
-        
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-            { contents: [{ parts: [{ text: `${sys}\n\n${query}` }] }] }
+        const { fileBase64, prompt } = req.body;
+
+        if (!fileBase64) {
+            return res.status(400).json({
+                success: false,
+                error: "No PDF provided"
+            });
+        }
+
+        const buffer = Buffer.from(
+            fileBase64.replace(/^data:application\/pdf;base64,/, ""),
+            "base64"
         );
-        
-        const text = response.data.candidates[0].content.parts[0].text;
-        res.send(`
-            <body style="font-family:sans-serif; padding:30px; background:#f4f7f6;">
-                <div style="background:white; padding:20px; border-radius:15px; box-shadow:0 4px 10px rgba(0,0,0,0.1);">
-                    <h2 style="color:#002b5c;">🤖 JARVIS Math Test</h2>
-                    <p><b>Question:</b> ${query}</p><hr>
-                    <p style="white-space: pre-wrap;">${text}</p>
-                </div>
-            </body>
-        `);
+
+        let text = "";
+
+        try {
+            const pdfData = await pdfParse(buffer);
+            text = pdfData.text || "";
+        } catch {}
+
+        if (text.trim().length < 50) {
+            text = await ocrSpace(fileBase64);
+        }
+
+        if (!text || text.trim().length < 5) {
+            return res.json({
+                success: false,
+                error: "Unreadable document"
+            });
+        }
+
+        const result = await callGemini([
+            {
+                parts: [
+                    {
+                        text:
+                            `Analyze this document:\n\n${text}\n\nUser request: ${prompt || "Summarize"}`
+                    }
+                ]
+            }
+        ]);
+
+        res.json({ success: true, result });
+
     } catch (err) {
-        res.status(500).send(`Test Failed: ${err.message}`);
+        res.status(500).json({ success: false, error: "PDF failed" });
     }
 });
 
-app.post("/generate-image", (req, res) => {
-    res.status(501).json({ success: false, error: "Image generation requires Vertex AI setup." });
+// ---------------- SERVER ----------------
+app.listen(PORT, () => {
+    console.log(`🚀 JARVIS RUNNING ON PORT ${PORT}`);
 });
-
-app.listen(PORT, () => console.log(`🚀 JARVIS Server Live on Port ${PORT}`));
