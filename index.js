@@ -1,84 +1,86 @@
-require('dotenv').config(); // Essential for local testing
+require('dotenv').config();
 const express = require("express");
 const axios = require("axios");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// Simple health check to see if the server is alive
+// --- CONFIGURATION ---
+// Add your multiple API keys here
+const API_KEYS = [
+    process.env.GEMINI_API_KEY_1,
+    process.env.GEMINI_API_KEY_2,
+    process.env.GEMINI_API_KEY_3
+].filter(key => key); // Removes any empty/undefined keys
+
+let currentKeyIndex = 0;
+
 app.get("/", (req, res) => {
-    res.send("🤖 Gemini Link API is online and ready!");
+    res.send("🤖 Flexi-AI Core is online with Multi-Key Rotation!");
 });
 
-/**
- * MAIN AI ENDPOINT
- * Usage: /ai?q=your question here
- */
 app.get("/ai", async (req, res) => {
-    const prompt = req.query.q;
+    const userPrompt = req.query.q;
 
-    // 1. Check if user actually sent a prompt
-    if (!prompt) {
-        return res.status(400).json({
-            success: false,
-            error: "Missing query parameter 'q'. Usage: /ai?q=hello"
-        });
+    if (!userPrompt) {
+        return res.status(400).json({ success: false, error: "Missing query parameter 'q'." });
+    }
+
+    // 1. MATH & OUTPUT INSTRUCTION
+    // This forces Gemini to avoid LaTeX and use WhatsApp-friendly symbols
+    const systemInstruction = 
+        "CRITICAL: Use Unicode symbols (√, ±, ², ³, ≈, ÷). " +
+        "Represent fractions as 'a/b' or using horizontal lines. " +
+        "NO LaTeX ($ or \\frac). Response for WhatsApp bot JARVIS AI.";
+
+    const finalPrompt = `${systemInstruction}\n\nUser Question: ${userPrompt}`;
+
+    // 2. RECURSIVE FUNCTION TO HANDLE ROTATION
+    async function fetchWithRotation(index) {
+        if (index >= API_KEYS.length) {
+            throw new Error("All API keys exhausted or rate-limited.");
+        }
+
+        try {
+            const apiKey = API_KEYS[index];
+            const response = await axios.post(
+                `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
+                { contents: [{ parts: [{ text: finalPrompt }] }] },
+                { timeout: 25000 }
+            );
+
+            return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+
+        } catch (err) {
+            const isRateLimit = err.response?.status === 429;
+            
+            if (isRateLimit && index < API_KEYS.length - 1) {
+                console.log(`⚠️ Key ${index} Limited. Rotating to Key ${index + 1}...`);
+                currentKeyIndex = index + 1; // Update global index for next global request
+                return fetchWithRotation(index + 1);
+            }
+            throw err; // Pass error up if no more keys or different error
+        }
     }
 
     try {
-        const apiKey = process.env.GEMINI_API_KEY;
-
-        // 2. Ensure API Key exists in Render/Environment
-        if (!apiKey) {
-            return res.status(500).json({
-                success: false,
-                error: "Gemini API key not found in server settings."
-            });
-        }
-
-        // 3. Call the Gemini API
-        // Updated to v1 and gemini-2.5-flash for 2026 compatibility
-        const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
-            {
-                contents: [{
-                    parts: [{ text: prompt }]
-                }]
-            },
-            { timeout: 30000 } // Don't let the request hang forever
-        );
-
-        // 4. Extract the text response
-        const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+        const result = await fetchWithRotation(currentKeyIndex);
 
         if (!result) {
-            return res.json({
-                success: false,
-                error: "Gemini returned an empty response. This is usually due to safety filters."
-            });
+            return res.json({ success: false, error: "Empty response from AI." });
         }
 
-        // 5. Send the successful result back
-        return res.json({
-            success: true,
-            result: result
-        });
+        return res.json({ success: true, result: result });
 
     } catch (err) {
-        // Log error for you (the dev) but keep it clean for the user
-        console.error("AI ERROR:", err.response?.data || err.message);
-
-        const statusCode = err.response?.status || 500;
-        const errorMessage = err.response?.data?.error?.message || "AI request failed";
-
-        return res.status(statusCode).json({
+        console.error("FINAL ERROR:", err.message);
+        return res.status(500).json({
             success: false,
-            error: errorMessage
+            error: "Service temporarily unavailable. Please try again."
         });
     }
 });
 
 app.listen(PORT, () => {
-    console.log(`🚀 Gemini Link API is running on port ${PORT}`);
+    console.log(`🚀 Flexi-AI is running on port ${PORT} with ${API_KEYS.length} keys.`);
 });
-            
