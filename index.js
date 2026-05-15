@@ -70,7 +70,7 @@ app.post("/ai", async (req, res) => {
 
         // FIXED: The full corrected Google API URL for 2026
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
             { contents: [{ parts: parts }] }
         );
 
@@ -93,7 +93,7 @@ app.get("/test/:query", async (req, res) => {
         const sys = "NO LATEX. Use Unicode symbols like ², √, π. Solve clearly.";
         
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
             { contents: [{ parts: [{ text: `${sys}\n\n${query}` }] }] }
         );
         
