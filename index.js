@@ -5,7 +5,7 @@ const axios = require("axios");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-// 1. INCREASE LIMITS: Required for high-res Base64 images
+// 1. INCREASE LIMITS: Required for high-res images and PDF data
 app.use(express.json({ limit: '20mb' })); 
 app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
@@ -32,28 +32,38 @@ const getNigeriaTime = () => {
     }).format(new Date());
 };
 
+// Base Route
 app.get("/", (req, res) => {
-    res.send(`🤖 JARVIS AI Core Online | WAT: ${getNigeriaTime()} | Active Keys: ${API_KEYS.length}`);
+    res.send(`🤖 JARVIS AI Core Online | WAT: ${getNigeriaTime()} | Keys Active: ${API_KEYS.length}`);
 });
 
 // --- NEW: BROWSER TEST ROUTE ---
-// Test this by visiting: https://your-link.onrender.com/test/hello
+// Visit: https://flexieduconsult-ai-link.onrender.com/test/what is an ai
 app.get("/test/:query", async (req, res) => {
     const userQuery = req.params.query;
     try {
         const apiKey = API_KEYS[0];
         const response = await axios.post(
-            `https://generativelanguage.googleapis.com/v1beta/models/gemini-3-flash:generateContent?key=${apiKey}`,
+            `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
             { contents: [{ parts: [{ text: userQuery }] }] }
         );
         const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-        res.send(`<h1>JARVIS Test Mode</h1><p><b>Query:</b> ${userQuery}</p><p><b>AI Response:</b> ${result}</p>`);
+        res.send(`
+            <body style="font-family:sans-serif; padding:20px; background:#f0f2f5;">
+                <div style="background:white; padding:20px; border-radius:15px; box-shadow: 0 4px 6px rgba(0,0,0,0.1);">
+                    <h2 style="color:#002b5c;">🤖 JARVIS Test Mode</h2>
+                    <p><b>Your Question:</b> ${userQuery}</p>
+                    <hr>
+                    <p><b>AI Response:</b><br>${result}</p>
+                </div>
+            </body>
+        `);
     } catch (err) {
-        res.status(500).send(`<h1>Test Failed</h1><p>${err.message}</p><p>Check if your API Key is valid!</p>`);
+        res.status(500).send(`<h1>Test Failed</h1><p>${err.message}</p>`);
     }
 });
 
-// --- ENDPOINT: TEXT, IMAGE & FILE ANALYSIS ---
+// --- MAIN AI ENDPOINT (Used by WhatsApp Bot) ---
 app.post("/ai", async (req, res) => {
     const { prompt, image, audio } = req.body;
 
@@ -62,20 +72,19 @@ app.post("/ai", async (req, res) => {
     }
 
     const systemInstruction = 
-        `CRITICAL: Use Unicode symbols. Represent fractions as 'a/b'. NO LaTeX. ` +
+        `CRITICAL: Use Unicode symbols (√, ±, ², ³, ≈, ÷). Represent fractions as 'a/b'. NO LaTeX. ` +
         `Current Nigeria Time: ${getNigeriaTime()}. Respond as JARVIS AI for Flexi Digital Academy.`;
 
     const finalPrompt = `${systemInstruction}\n\nUser: ${prompt || "Analyze the provided media."}`;
 
     async function fetchWithRotation(index) {
-        if (index >= API_KEYS.length) throw new Error("All API keys exhausted or invalid.");
+        if (index >= API_KEYS.length) throw new Error("All API keys exhausted.");
 
         try {
             const apiKey = API_KEYS[index];
             const parts = [{ text: finalPrompt }];
             
             if (image) {
-                // Check if it's a PDF or Image based on Base64 header
                 const mime = image.startsWith("JVBERi0") ? "application/pdf" : "image/jpeg";
                 parts.push({ inline_data: { mime_type: mime, data: image } });
             }
@@ -85,19 +94,14 @@ app.post("/ai", async (req, res) => {
             }
 
             const response = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${apiKey}`,
+                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${apiKey}`,
                 { contents: [{ parts: parts }] },
                 { timeout: 30000 }
             );
 
-            const result = response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
-            if (!result) throw new Error("Empty AI response");
-            return result;
-
+            return response.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         } catch (err) {
-            const status = err.response?.status;
-            if ((status === 429 || status === 400) && index < API_KEYS.length - 1) {
-                console.log(`⚠️ Key ${index} failed (${status}). Rotating...`);
+            if (err.response?.status === 429 && index < API_KEYS.length - 1) {
                 currentKeyIndex = index + 1;
                 return fetchWithRotation(index + 1);
             }
@@ -109,12 +113,11 @@ app.post("/ai", async (req, res) => {
         const result = await fetchWithRotation(currentKeyIndex);
         return res.json({ success: true, result: result });
     } catch (err) {
-        console.error("AI ERROR:", err.response?.data || err.message);
-        return res.status(500).json({ success: false, error: "AI service currently unavailable." });
+        return res.status(500).json({ success: false, error: "AI Service Busy." });
     }
 });
 
-// --- ENDPOINT: IMAGE GENERATION ---
+// --- IMAGE GENERATION ---
 app.post("/generate-image", async (req, res) => {
     const { prompt } = req.body;
     if (!prompt) return res.status(400).json({ success: false, error: "Missing prompt." });
@@ -125,12 +128,9 @@ app.post("/generate-image", async (req, res) => {
             const apiKey = API_KEYS[index];
             const response = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/imagen-3.0-generate-images:predict?key=${apiKey}`,
-                { instances: [{ prompt: prompt }], parameters: { sampleCount: 1 } },
-                { timeout: 45000 }
+                { instances: [{ prompt: prompt }], parameters: { sampleCount: 1 } }
             );
-            const base64 = response.data?.predictions?.[0]?.bytesBase64Encoded;
-            if (!base64) throw new Error("No image generated.");
-            return base64;
+            return response.data?.predictions?.[0]?.bytesBase64Encoded;
         } catch (err) {
             if (err.response?.status === 429 && index < API_KEYS.length - 1) {
                 currentKeyIndex = index + 1;
@@ -148,7 +148,5 @@ app.post("/generate-image", async (req, res) => {
     }
 });
 
-app.listen(PORT, () => {
-    console.log(`🚀 JARVIS Server Online on port ${PORT}`);
-});
-                
+app.listen(PORT, () => console.log(`🚀 Flexi-AI Server Online on port ${PORT}`));
+    
