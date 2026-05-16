@@ -209,14 +209,26 @@ app.post("/pdf", async (req, res) => {
 });
 
 // =====================================================
-// 4. AUTOMATED WEEKLY QUIZ GENERATOR (STRICT JSON)
+// 4. MANUAL TRIGGER QUIZ ENDPOINT
 // =====================================================
 app.post("/generate-quiz", async (req, res) => {
     try {
-        const subjects = ["Mathematics", "Physics", "Chemistry", "Biology", "English Language"];
-        const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+        const targetSubject = await runQuizGenerationPipeline();
+        res.json({ success: true, message: `Manual trigger successfully deployed for ${targetSubject}.` });
+    } catch (err) {
+        console.log("Quiz Generation Endpoint Failure:", err.message);
+        res.status(500).json({ success: false, error: "Quiz compilation framework failed" });
+    }
+});
 
-        const prompt = `You are JARVIS, the master examiner for Flexi Digital Academy. 
+// =====================================================
+// core QUIZ COMPILATION & WHATSAPP PUSH LOGIC
+// =====================================================
+async function runQuizGenerationPipeline() {
+    const subjects = ["Mathematics", "Physics", "Chemistry", "Biology", "English Language"];
+    const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+
+    const prompt = `You are JARVIS, the master examiner for Flexi Digital Academy. 
 Generate exactly 5 challenging multiple-choice questions for Post-UTME preparation in the subject: ${randomSubject}.
 You must return the response strictly as a JSON object with this exact schema structure:
 {
@@ -230,24 +242,64 @@ Rules:
 - answers must contain exactly 5 elements corresponding to the correct option string character (A, B, C, or D) for each question sequentially.
 - NO LATEX. Formulate variables, signs, math expressions using Unicode fallback mappings like √, π, ±, ², ³.`;
 
-        const resultJson = await callGemini([{ parts: [{ text: prompt }] }], true);
-        const quizData = JSON.parse(resultJson);
+    const resultJson = await callGemini([{ parts: [{ text: prompt }] }], true);
+    const quizData = JSON.parse(resultJson);
 
-        res.json({
-            success: true,
-            subject: quizData.subject,
-            quizText: quizData.quizText,
-            answers: quizData.answers
-        });
+    // 🚀 PUSH PAYLOAD STREAM DIRECTLY DOWN TO WHATSAPP RECIPIENT WEBHOOK
+    // ⚠️ Replace 'YOUR-BOT-LIVE-URL.onrender.com' with your actual running WhatsApp Bot domain
+    await axios.post('https://YOUR-BOT-LIVE-URL.onrender.com/webhook/trigger-quiz', {
+        subject: quizData.subject,
+        quizText: quizData.quizText,
+        answers: quizData.answers
+    }, { timeout: 30000 });
 
+    return randomSubject;
+}
+
+// =====================================================
+// INTERNAL 24/7 NIGERIA WAT TIME BACKGROUND TRACKER
+// =====================================================
+let quizFiredThisWeek = false;
+
+setInterval(async () => {
+    try {
+        const currentDate = new Date();
+
+        // 1. Resolve Current Weekday Number (6 = Saturday)
+        const currentDay = new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Africa/Lagos",
+            weekday: "numeric"
+        }).format(currentDate);
+
+        // 2. Resolve Current Hour (Military 24h format index, e.g. "20" = 8PM)
+        const currentHour = new Intl.DateTimeFormat("en-GB", {
+            timeZone: "Africa/Lagos",
+            hour: "2-digit",
+            hour12: false
+        }).format(currentDate);
+
+        // Match Saturday @ 8:00 PM West Africa Time
+        if (currentDay === "6" && currentHour === "20") {
+            if (!quizFiredThisWeek) {
+                quizFiredThisWeek = true; // Lock execution tracking flag state
+                console.log("⏰ Target Match (Saturday 8:00 PM WAT). Running quiz generation engine...");
+                
+                const handledSubject = await runQuizGenerationPipeline();
+                console.log(`✅ Broadcast pipeline completed for subject: ${handledSubject}`);
+            }
+        } else {
+            // Once the 8 PM hour passes completely, reset tracking lock for next week
+            if (quizFiredThisWeek) {
+                quizFiredThisWeek = false;
+                console.log("🔄 Time window cleared. Quiz sequence tracking module reset.");
+            }
+        }
     } catch (err) {
-        console.log("Quiz Generation Endpoint Failure:", err.message);
-        res.status(500).json({ success: false, error: "Quiz compilation framework failed" });
+        console.log("⚠️ Background Quiz Clock Loop Exception:", err.message);
     }
-});
+}, 60000); // Polling ticks down accurately every 60 seconds
 
 // ---------------- SERVER ----------------
 app.listen(PORT, () => {
     console.log(`🚀 JARVIS RUNNING ON PORT ${PORT}`);
 });
-            
