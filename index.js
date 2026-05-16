@@ -27,22 +27,28 @@ const getNextKey = () => {
 };
 
 // ---------------- GEMINI CALL ----------------
-async function callGemini(contents) {
+async function callGemini(contents, isJson = false) {
     let lastError;
 
     for (let i = 0; i < API_KEYS.length; i++) {
         const key = getNextKey();
 
         try {
+            const payload = { contents };
+            if (isJson) {
+                payload.generationConfig = { responseMimeType: "application/json" };
+            }
+
             const res = await axios.post(
                 `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-                { contents },
+                payload,
                 { timeout: 45000 }
             );
 
             return res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
         } catch (err) {
             lastError = err;
+            console.log(`Key ${i + 1} encountered an issue, rotating keys...`);
         }
     }
 
@@ -202,7 +208,46 @@ app.post("/pdf", async (req, res) => {
     }
 });
 
+// =====================================================
+// 4. AUTOMATED WEEKLY QUIZ GENERATOR (STRICT JSON)
+// =====================================================
+app.post("/generate-quiz", async (req, res) => {
+    try {
+        const subjects = ["Mathematics", "Physics", "Chemistry", "Biology", "English Language"];
+        const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
+
+        const prompt = `You are JARVIS, the master examiner for Flexi Digital Academy. 
+Generate exactly 5 challenging multiple-choice questions for Post-UTME preparation in the subject: ${randomSubject}.
+You must return the response strictly as a JSON object with this exact schema structure:
+{
+  "subject": "${randomSubject}",
+  "quizText": "📚 *WEEKLY MOCK QUIZ: ${randomSubject.toUpperCase()}* 📚\\n\\n1. [Question text here]\\nA) [Option]\\nB) [Option]\\nC) [Option]\\nD) [Option]\\n\\n2. ...",
+  "answers": ["A", "C", "B", "D", "A"]
+}
+Rules:
+- quizText must display the complete test block numbered 1 through 5.
+- DO NOT reveal the correct options inside the quizText block text string itself.
+- answers must contain exactly 5 elements corresponding to the correct option string character (A, B, C, or D) for each question sequentially.
+- NO LATEX. Formulate variables, signs, math expressions using Unicode fallback mappings like √, π, ±, ², ³.`;
+
+        const resultJson = await callGemini([{ parts: [{ text: prompt }] }], true);
+        const quizData = JSON.parse(resultJson);
+
+        res.json({
+            success: true,
+            subject: quizData.subject,
+            quizText: quizData.quizText,
+            answers: quizData.answers
+        });
+
+    } catch (err) {
+        console.log("Quiz Generation Endpoint Failure:", err.message);
+        res.status(500).json({ success: false, error: "Quiz compilation framework failed" });
+    }
+});
+
 // ---------------- SERVER ----------------
 app.listen(PORT, () => {
     console.log(`🚀 JARVIS RUNNING ON PORT ${PORT}`);
 });
+            
