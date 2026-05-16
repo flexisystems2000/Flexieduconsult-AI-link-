@@ -1,4 +1,5 @@
 require("dotenv").config();
+
 const express = require("express");
 const axios = require("axios");
 const pdfParse = require("pdf-parse");
@@ -6,302 +7,794 @@ const pdfParse = require("pdf-parse");
 const app = express();
 const PORT = process.env.PORT || 3000;
 
-app.use(express.json({ limit: "15mb" }));
-app.use(express.urlencoded({ extended: true, limit: "15mb" }));
+// =====================================================
+// MIDDLEWARE
+// =====================================================
 
-// ---------------- API KEYS ----------------
+app.use(express.json({ limit: "15mb" }));
+app.use(express.urlencoded({
+    extended: true,
+    limit: "15mb"
+}));
+
+// =====================================================
+// GEMINI API KEYS
+// =====================================================
+
 const API_KEYS = [
+
     process.env.GEMINI_API_KEY_1,
     process.env.GEMINI_API_KEY_2,
     process.env.GEMINI_API_KEY_3,
     process.env.GEMINI_API_KEY_4,
-    process.env.GEMINI_API_KEY_5
+    process.env.GEMINI_API_KEY_5,
+    process.env.GEMINI_API_KEY_6,
+    process.env.GEMINI_API_KEY_7,
+    process.env.GEMINI_API_KEY_8,
+    process.env.GEMINI_API_KEY_9,
+    process.env.GEMINI_API_KEY_10
+
 ].filter(Boolean);
 
 let keyIndex = 0;
 
+// =====================================================
+// API KEY ROTATOR
+// =====================================================
+
 const getNextKey = () => {
-    if (API_KEYS.length === 0) throw new Error("No Gemini API keys");
+
+    if (!API_KEYS.length) {
+        throw new Error("No Gemini API Keys Found");
+    }
 
     const key = API_KEYS[keyIndex];
-    keyIndex = (keyIndex + 1) % API_KEYS.length;
+
+    keyIndex =
+        (keyIndex + 1) % API_KEYS.length;
+
     return key;
 };
 
-// ---------------- GEMINI CALL ----------------
-async function callGemini(contents, isJson = false) {
+// =====================================================
+// GEMINI REQUEST ENGINE
+// =====================================================
+
+async function callGemini(
+    contents,
+    isJson = false
+) {
+
     let lastError;
 
     for (let i = 0; i < API_KEYS.length; i++) {
+
         const key = getNextKey();
 
         try {
-            const payload = { contents };
+
+            const payload = {
+                contents
+            };
+
+            // Force JSON response if needed
             if (isJson) {
-                payload.generationConfig = { responseMimeType: "application/json" };
+
+                payload.generationConfig = {
+
+                    responseMimeType:
+                        "application/json"
+                };
             }
 
-            const res = await axios.post(
-                `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
-                payload,
-                { timeout: 45000 }
-            );
+            const response =
+                await axios.post(
 
-            return res.data?.candidates?.[0]?.content?.parts?.[0]?.text;
+                    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`,
+
+                    payload,
+
+                    {
+                        timeout: 45000,
+
+                        headers: {
+                            "Content-Type":
+                                "application/json"
+                        }
+                    }
+                );
+
+            const text =
+                response.data
+                    ?.candidates?.[0]
+                    ?.content?.parts?.[0]
+                    ?.text;
+
+            if (text) {
+                return text;
+            }
+
         } catch (err) {
+
             lastError = err;
-            console.log(`Key ${i + 1} encountered an issue, rotating keys...`);
+
+            console.log(
+                `⚠️ Gemini key ${i + 1} failed. Rotating...`
+            );
         }
     }
 
-    throw new Error(lastError?.message || "Gemini failed");
+    throw new Error(
+        lastError?.message ||
+        "Gemini request failed"
+    );
 }
 
-// ---------------- OCR ----------------
+// =====================================================
+// OCR SPACE
+// =====================================================
+
 async function ocrSpace(fileBase64) {
+
     try {
-        const clean = fileBase64.replace(/^data:.*?;base64,/, "");
 
-        const formData = new URLSearchParams();
-        formData.append("base64Image", clean);
-        formData.append("language", "eng");
-        formData.append("OCREngine", "2");
+        const clean =
+            fileBase64.replace(
+                /^data:.*?;base64,/,
+                ""
+            );
 
-        const res = await axios.post(
-            "https://api.ocr.space/parse/image",
-            formData,
-            {
-                headers: {
-                    apikey: process.env.OCR_API_KEY,
-                    "Content-Type": "application/x-www-form-urlencoded"
-                },
-                timeout: 30000
-            }
+        const formData =
+            new URLSearchParams();
+
+        formData.append(
+            "base64Image",
+            clean
         );
 
-        return res.data?.ParsedResults?.map(r => r.ParsedText).join("\n")?.trim() || "";
-    } catch (err) {
+        formData.append(
+            "language",
+            "eng"
+        );
+
+        formData.append(
+            "OCREngine",
+            "2"
+        );
+
+        const response =
+            await axios.post(
+
+                "https://api.ocr.space/parse/image",
+
+                formData,
+
+                {
+                    headers: {
+
+                        apikey:
+                            process.env.OCR_API_KEY,
+
+                        "Content-Type":
+                            "application/x-www-form-urlencoded"
+                    },
+
+                    timeout: 30000
+                }
+            );
+
+        return response.data
+            ?.ParsedResults
+            ?.map(r => r.ParsedText)
+            .join("\n")
+            ?.trim() || "";
+
+    } catch {
+
         return "";
     }
 }
 
-// ---------------- TIME ----------------
+// =====================================================
+// NIGERIA TIME
+// =====================================================
+
 const getNigeriaTime = () => {
-    return new Intl.DateTimeFormat("en-GB", {
-        timeZone: "Africa/Lagos",
-        day: "2-digit",
-        month: "long",
-        year: "numeric",
-        hour: "2-digit",
-        minute: "2-digit",
-        hour12: true
-    }).format(new Date());
+
+    return new Intl.DateTimeFormat(
+        "en-GB",
+        {
+            timeZone: "Africa/Lagos",
+
+            day: "2-digit",
+            month: "long",
+            year: "numeric",
+
+            hour: "2-digit",
+            minute: "2-digit",
+
+            hour12: true
+        }
+    ).format(new Date());
 };
 
-// ---------------- HOME ----------------
+// =====================================================
+// HOME ROUTE
+// =====================================================
+
 app.get("/", (req, res) => {
-    res.send(`<h1>🤖 JARVIS CORE</h1><p>ONLINE</p><p>${getNigeriaTime()}</p>`);
+
+    res.send(`
+        <h1>🤖 JARVIS CORE</h1>
+        <p>ONLINE</p>
+        <p>${getNigeriaTime()}</p>
+    `);
 });
 
 // =====================================================
-// 1. AI ROUTE
+// TEST ROUTE
 // =====================================================
-app.post("/ai", async (req, res) => {
-    try {
-        const { prompt, image } = req.body;
 
-        const parts = [
-            {
-                text:
-                    `You are JARVIS for Flexi Digital Academy. ` +
-                    `Be educational. NO LATEX. Use √ π ± ² ³.\n\nUser: ${prompt || "Analyze this"}`
-            }
-        ];
-
-        if (image) {
-            parts.push({
-                inline_data: {
-                    mime_type: "image/jpeg",
-                    data: image.replace(/^data:.*?;base64,/, "")
-                }
-            });
-        }
-
-        const result = await callGemini([{ parts }]);
-
-        res.json({ success: true, result: result || "No response" });
-
-    } catch (err) {
-        res.status(500).json({ success: false, error: "AI failed" });
-    }
-});
-
-// =====================================================
-// 2. IMAGE ROUTE
-// =====================================================
-app.get("/image", (req, res) => {
-    const prompt = req.query.prompt;
-
-    if (!prompt) {
-        return res.status(400).json({
-            success: false,
-            error: "Prompt required"
-        });
-    }
+app.get("/test", (req, res) => {
 
     res.json({
         success: true,
-        image: `https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`
+        message: "AI Server Online"
     });
 });
 
 // =====================================================
-// 3. PDF ROUTE (SMART + OCR)
+// AI ROUTE
 // =====================================================
-app.post("/pdf", async (req, res) => {
-    try {
-        const { fileBase64, prompt } = req.body;
 
-        if (!fileBase64) {
-            return res.status(400).json({
-                success: false,
-                error: "No PDF provided"
+app.post("/ai", async (req, res) => {
+
+    try {
+
+        const {
+            prompt,
+            image
+        } = req.body;
+
+        const parts = [
+
+            {
+                text:
+`You are JARVIS for Flexi Digital Academy.
+
+Be educational.
+NO LATEX.
+Use Unicode symbols like:
+√ π ± ² ³
+
+User:
+${prompt || "Analyze this"}`
+            }
+        ];
+
+        if (image) {
+
+            parts.push({
+
+                inline_data: {
+
+                    mime_type: "image/jpeg",
+
+                    data:
+                        image.replace(
+                            /^data:.*?;base64,/,
+                            ""
+                        )
+                }
             });
         }
 
-        const buffer = Buffer.from(
-            fileBase64.replace(/^data:application\/pdf;base64,/, ""),
-            "base64"
+        const result =
+            await callGemini([
+                { parts }
+            ]);
+
+        return res.json({
+
+            success: true,
+
+            result:
+                result || "No response"
+        });
+
+    } catch (err) {
+
+        console.log(
+            "❌ AI Route Error:",
+            err.message
         );
+
+        return res.status(500).json({
+
+            success: false,
+
+            error: "AI failed"
+        });
+    }
+});
+
+// =====================================================
+// GRAMMAR ROUTE
+// =====================================================
+
+app.post("/grammar", async (req, res) => {
+
+    try {
+
+        const { text } = req.body;
+
+        if (
+            !text ||
+            text.trim().length < 2
+        ) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                error: "Text required"
+            });
+        }
+
+        const prompt =
+`You are an advanced grammar and spelling correction engine.
+
+Your task:
+- Correct spelling mistakes
+- Correct grammar mistakes
+- Correct broken English naturally
+- Preserve original meaning
+
+RULES:
+- Return ONLY JSON
+- No markdown
+- No explanations
+- No extra text
+
+RESPONSE FORMAT:
+
+{
+  "type": "grammar",
+  "reply": "Corrected sentence"
+}
+
+OR
+
+{
+  "type": "spelling",
+  "reply": "Corrected sentence"
+}
+
+USER:
+${text}`;
+
+        const result =
+            await callGemini(
+
+                [
+                    {
+                        parts: [
+                            {
+                                text: prompt
+                            }
+                        ]
+                    }
+                ],
+
+                true
+            );
+
+        let parsed;
+
+        try {
+
+            parsed = JSON.parse(result);
+
+        } catch {
+
+            console.log(
+                "❌ Invalid Gemini JSON:",
+                result
+            );
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Invalid AI JSON"
+            });
+        }
+
+        if (!parsed.reply) {
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "No correction returned"
+            });
+        }
+
+        return res.json({
+
+            success: true,
+
+            type:
+                parsed.type || "grammar",
+
+            reply:
+                parsed.reply
+        });
+
+    } catch (err) {
+
+        console.log(
+            "❌ Grammar Route Error:",
+            err.message
+        );
+
+        return res.status(500).json({
+
+            success: false,
+
+            error:
+                "Grammar engine failed"
+        });
+    }
+});
+
+// =====================================================
+// IMAGE ROUTE
+// =====================================================
+
+app.get("/image", (req, res) => {
+
+    const prompt =
+        req.query.prompt;
+
+    if (!prompt) {
+
+        return res.status(400).json({
+
+            success: false,
+
+            error:
+                "Prompt required"
+        });
+    }
+
+    return res.json({
+
+        success: true,
+
+        image:
+`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`
+    });
+});
+
+// =====================================================
+// PDF ROUTE
+// =====================================================
+
+app.post("/pdf", async (req, res) => {
+
+    try {
+
+        const {
+            fileBase64,
+            prompt
+        } = req.body;
+
+        if (!fileBase64) {
+
+            return res.status(400).json({
+
+                success: false,
+
+                error:
+                    "No PDF provided"
+            });
+        }
+
+        const buffer =
+            Buffer.from(
+
+                fileBase64.replace(
+                    /^data:application\/pdf;base64,/,
+                    ""
+                ),
+
+                "base64"
+            );
 
         let text = "";
 
         try {
-            const pdfData = await pdfParse(buffer);
-            text = pdfData.text || "";
+
+            const pdfData =
+                await pdfParse(buffer);
+
+            text =
+                pdfData.text || "";
+
         } catch {}
 
-        if (text.trim().length < 50) {
-            text = await ocrSpace(fileBase64);
+        if (
+            text.trim().length < 50
+        ) {
+
+            text =
+                await ocrSpace(fileBase64);
         }
 
-        if (!text || text.trim().length < 5) {
+        if (
+            !text ||
+            text.trim().length < 5
+        ) {
+
             return res.json({
+
                 success: false,
-                error: "Unreadable document"
+
+                error:
+                    "Unreadable document"
             });
         }
 
-        const result = await callGemini([
-            {
-                parts: [
-                    {
-                        text:
-                            `Analyze this document:\n\n${text}\n\nUser request: ${prompt || "Summarize"}`
-                    }
-                ]
-            }
-        ]);
+        const result =
+            await callGemini([
 
-        res.json({ success: true, result });
+                {
+                    parts: [
+                        {
+                            text:
+`Analyze this document:
+
+${text}
+
+User Request:
+${prompt || "Summarize"}`
+                        }
+                    ]
+                }
+            ]);
+
+        return res.json({
+
+            success: true,
+            result
+        });
 
     } catch (err) {
-        res.status(500).json({ success: false, error: "PDF failed" });
+
+        console.log(
+            "❌ PDF Route Error:",
+            err.message
+        );
+
+        return res.status(500).json({
+
+            success: false,
+
+            error:
+                "PDF failed"
+        });
     }
 });
 
 // =====================================================
-// 4. MANUAL TRIGGER QUIZ ENDPOINT
+// QUIZ GENERATION ROUTE
 // =====================================================
-app.post("/generate-quiz", async (req, res) => {
-    try {
-        const targetSubject = await runQuizGenerationPipeline();
-        res.json({ success: true, message: `Manual trigger successfully deployed for ${targetSubject}.` });
-    } catch (err) {
-        console.log("Quiz Generation Endpoint Failure:", err.message);
-        res.status(500).json({ success: false, error: "Quiz compilation framework failed" });
+
+app.post(
+    "/generate-quiz",
+
+    async (req, res) => {
+
+        try {
+
+            const subject =
+                await runQuizGenerationPipeline();
+
+            return res.json({
+
+                success: true,
+
+                message:
+`Quiz deployed for ${subject}`
+            });
+
+        } catch (err) {
+
+            console.log(
+                "❌ Quiz Route Error:",
+                err.message
+            );
+
+            return res.status(500).json({
+
+                success: false,
+
+                error:
+                    "Quiz generation failed"
+            });
+        }
     }
-});
+);
 
 // =====================================================
-// core QUIZ COMPILATION & WHATSAPP PUSH LOGIC
+// QUIZ ENGINE
 // =====================================================
+
 async function runQuizGenerationPipeline() {
-    const subjects = ["Mathematics", "Physics", "Chemistry", "Biology", "English Language"];
-    const randomSubject = subjects[Math.floor(Math.random() * subjects.length)];
 
-    const prompt = `You are JARVIS, the master examiner for Flexi Digital Academy. 
-Generate exactly 5 challenging multiple-choice questions for Post-UTME preparation in the subject: ${randomSubject}.
-You must return the response strictly as a JSON object with this exact schema structure:
+    const subjects = [
+
+        "Mathematics",
+        "Physics",
+        "Chemistry",
+        "Biology",
+        "English Language"
+    ];
+
+    const randomSubject =
+        subjects[
+            Math.floor(
+                Math.random() *
+                subjects.length
+            )
+        ];
+
+    const prompt =
+`Generate exactly 5 Post-UTME multiple choice questions for ${randomSubject}.
+
+Return ONLY JSON:
+
 {
   "subject": "${randomSubject}",
-  "quizText": "📚 *WEEKLY MOCK QUIZ: ${randomSubject.toUpperCase()}* 📚\\n\\n1. [Question text here]\\nA) [Option]\\nB) [Option]\\nC) [Option]\\nD) [Option]\\n\\n2. ...",
-  "answers": ["A", "C", "B", "D", "A"]
-}
-Rules:
-- quizText must display the complete test block numbered 1 through 5.
-- DO NOT reveal the correct options inside the quizText block text string itself.
-- answers must contain exactly 5 elements corresponding to the correct option string character (A, B, C, or D) for each question sequentially.
-- NO LATEX. Formulate variables, signs, math expressions using Unicode fallback mappings like √, π, ±, ², ³.`;
+  "quizText": "formatted quiz",
+  "answers": ["A","B","C","D","A"]
+}`;
 
-    const resultJson = await callGemini([{ parts: [{ text: prompt }] }], true);
-    const quizData = JSON.parse(resultJson);
+    const resultJson =
+        await callGemini(
 
-    // 🚀 PUSH PAYLOAD STREAM DIRECTLY DOWN TO WHATSAPP RECIPIENT WEBHOOK
-    // ⚠️ Replace 'YOUR-BOT-LIVE-URL.onrender.com' with your actual running WhatsApp Bot domain
-    await axios.post('https://YOUR-BOT-LIVE-URL.onrender.com/webhook/trigger-quiz', {
-        subject: quizData.subject,
-        quizText: quizData.quizText,
-        answers: quizData.answers
-    }, { timeout: 30000 });
+            [
+                {
+                    parts: [
+                        {
+                            text: prompt
+                        }
+                    ]
+                }
+            ],
+
+            true
+        );
+
+    const quizData =
+        JSON.parse(resultJson);
+
+    await axios.post(
+
+        "https://YOUR-BOT-LIVE-URL.onrender.com/webhook/trigger-quiz",
+
+        {
+            subject:
+                quizData.subject,
+
+            quizText:
+                quizData.quizText,
+
+            answers:
+                quizData.answers
+        },
+
+        {
+            timeout: 30000
+        }
+    );
 
     return randomSubject;
 }
 
 // =====================================================
-// INTERNAL 24/7 NIGERIA WAT TIME BACKGROUND TRACKER
+// AUTO QUIZ CLOCK
 // =====================================================
+
 let quizFiredThisWeek = false;
 
 setInterval(async () => {
+
     try {
-        const currentDate = new Date();
 
-        // 1. Resolve Current Weekday Number (6 = Saturday)
-        const currentDay = new Intl.DateTimeFormat("en-GB", {
-            timeZone: "Africa/Lagos",
-            weekday: "numeric"
-        }).format(currentDate);
+        const currentDate =
+            new Date();
 
-        // 2. Resolve Current Hour (Military 24h format index, e.g. "20" = 8PM)
-        const currentHour = new Intl.DateTimeFormat("en-GB", {
-            timeZone: "Africa/Lagos",
-            hour: "2-digit",
-            hour12: false
-        }).format(currentDate);
+        const currentDay =
+            new Intl.DateTimeFormat(
+                "en-GB",
+                {
+                    timeZone:
+                        "Africa/Lagos",
 
-        // Match Saturday @ 8:00 PM West Africa Time
-        if (currentDay === "6" && currentHour === "20") {
+                    weekday:
+                        "numeric"
+                }
+            ).format(currentDate);
+
+        const currentHour =
+            new Intl.DateTimeFormat(
+                "en-GB",
+                {
+                    timeZone:
+                        "Africa/Lagos",
+
+                    hour:
+                        "2-digit",
+
+                    hour12: false
+                }
+            ).format(currentDate);
+
+        if (
+            currentDay === "6" &&
+            currentHour === "20"
+        ) {
+
             if (!quizFiredThisWeek) {
-                quizFiredThisWeek = true; // Lock execution tracking flag state
-                console.log("⏰ Target Match (Saturday 8:00 PM WAT). Running quiz generation engine...");
-                
-                const handledSubject = await runQuizGenerationPipeline();
-                console.log(`✅ Broadcast pipeline completed for subject: ${handledSubject}`);
+
+                quizFiredThisWeek = true;
+
+                console.log(
+                    "⏰ Running scheduled quiz..."
+                );
+
+                const subject =
+                    await runQuizGenerationPipeline();
+
+                console.log(
+                    `✅ Quiz completed for ${subject}`
+                );
             }
+
         } else {
-            // Once the 8 PM hour passes completely, reset tracking lock for next week
+
             if (quizFiredThisWeek) {
+
                 quizFiredThisWeek = false;
-                console.log("🔄 Time window cleared. Quiz sequence tracking module reset.");
+
+                console.log(
+                    "🔄 Quiz lock reset"
+                );
             }
         }
-    } catch (err) {
-        console.log("⚠️ Background Quiz Clock Loop Exception:", err.message);
-    }
-}, 60000); // Polling ticks down accurately every 60 seconds
 
-// ---------------- SERVER ----------------
+    } catch (err) {
+
+        console.log(
+            "⚠️ Quiz Clock Error:",
+            err.message
+        );
+
+    }
+
+}, 60000);
+
+// =====================================================
+// START SERVER
+// =====================================================
+
 app.listen(PORT, () => {
-    console.log(`🚀 JARVIS RUNNING ON PORT ${PORT}`);
+
+    console.log(
+        `🚀 JARVIS RUNNING ON PORT ${PORT}`
+    );
 });
