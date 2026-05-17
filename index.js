@@ -342,13 +342,28 @@ app.post("/grammar", async (req, res) => {
         // =================================================
 
         const judgePrompt =
-`You are a grammar severity detector.
+`You are a smart Nigerian English and Pidgin detector.
 
-Determine whether this message contains SERIOUS English mistakes.
+Your task:
+Determine whether a message truly needs grammar correction.
 
-RULES:
+IMPORTANT:
+Do NOT correct:
+- Nigerian Pidgin
+- Mixed Pidgin + English
+- WhatsApp slang
+- Internet slang
+- Casual abbreviations
+- Informal African English
+- Understandable street expressions
 
-Return ONLY JSON.
+Only correct:
+- Serious grammatical mistakes
+- Broken English that harms understanding
+- Severe spelling issues
+- Academic or formal sentence errors
+
+RETURN ONLY JSON.
 
 EITHER:
 
@@ -362,31 +377,30 @@ OR
   "action": "CORRECT"
 }
 
-CORRECT means:
-- broken tense
-- broken sentence structure
-- major spelling issues
-- academically incorrect English
-
-IGNORE means:
-- casual WhatsApp English
-- slang
-- abbreviations
-- harmless informal English
-- understandable casual sentences
-
-Examples:
-
-"He go school yesterday"
-→ CORRECT
-
-"pls who dey online"
-→ IGNORE
+EXAMPLES:
 
 "omo this assignment hard"
 → IGNORE
 
-"Does people know the answer?"
+"abeg who get answer"
+→ IGNORE
+
+"I no understand this question"
+→ IGNORE
+
+"Shey you dey come today?"
+→ IGNORE
+
+"pls can u help me"
+→ IGNORE
+
+"He go school yesterday"
+→ CORRECT
+
+"Does people knows the answer?"
+→ CORRECT
+
+"I am goinged to school"
 → CORRECT
 
 USER:
