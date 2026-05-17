@@ -314,7 +314,7 @@ ${prompt || "Analyze this"}`
 });
 
 // =====================================================
-// GRAMMAR ROUTE
+// SMART GRAMMAR ROUTE
 // =====================================================
 
 app.post("/grammar", async (req, res) => {
@@ -336,13 +336,123 @@ app.post("/grammar", async (req, res) => {
             });
         }
 
-        const prompt =
-`You are an advanced grammar and spelling correction engine.
+        // =================================================
+        // STAGE 1:
+        // SEVERITY DETECTION
+        // =================================================
+
+        const judgePrompt =
+`You are a grammar severity detector.
+
+Determine whether this message contains SERIOUS English mistakes.
+
+RULES:
+
+Return ONLY JSON.
+
+EITHER:
+
+{
+  "action": "IGNORE"
+}
+
+OR
+
+{
+  "action": "CORRECT"
+}
+
+CORRECT means:
+- broken tense
+- broken sentence structure
+- major spelling issues
+- academically incorrect English
+
+IGNORE means:
+- casual WhatsApp English
+- slang
+- abbreviations
+- harmless informal English
+- understandable casual sentences
+
+Examples:
+
+"He go school yesterday"
+→ CORRECT
+
+"pls who dey online"
+→ IGNORE
+
+"omo this assignment hard"
+→ IGNORE
+
+"Does people know the answer?"
+→ CORRECT
+
+USER:
+${text}`;
+
+        const judgeResult =
+            await callGemini(
+
+                [
+                    {
+                        parts: [
+                            {
+                                text: judgePrompt
+                            }
+                        ]
+                    }
+                ],
+
+                true
+            );
+
+        let judgeParsed;
+
+        try {
+
+            judgeParsed =
+                JSON.parse(judgeResult);
+
+        } catch {
+
+            return res.json({
+
+                success: true,
+
+                ignored: true
+            });
+        }
+
+        // =================================================
+        // IGNORE CASUAL MESSAGE
+        // =================================================
+
+        if (
+            judgeParsed.action === "IGNORE"
+        ) {
+
+            return res.json({
+
+                success: true,
+
+                ignored: true
+            });
+        }
+
+        // =================================================
+        // STAGE 2:
+        // FULL CORRECTION
+        // =================================================
+
+        const correctionPrompt =
+`You are an advanced grammar correction engine.
 
 Your task:
+- Correct serious grammar mistakes
 - Correct spelling mistakes
-- Correct grammar mistakes
-- Correct broken English naturally
+- Fix broken English naturally
 - Preserve original meaning
 
 RULES:
@@ -368,14 +478,14 @@ OR
 USER:
 ${text}`;
 
-        const result =
+        const correctionResult =
             await callGemini(
 
                 [
                     {
                         parts: [
                             {
-                                text: prompt
+                                text: correctionPrompt
                             }
                         ]
                     }
@@ -388,34 +498,49 @@ ${text}`;
 
         try {
 
-            parsed = JSON.parse(result);
+            parsed =
+                JSON.parse(correctionResult);
 
         } catch {
 
             console.log(
-                "❌ Invalid Gemini JSON:",
-                result
+                "❌ Invalid Correction JSON:",
+                correctionResult
             );
 
-            return res.status(500).json({
+            return res.json({
 
-                success: false,
+                success: true,
 
-                error:
-                    "Invalid AI JSON"
+                ignored: true
             });
         }
 
-        if (!parsed.reply) {
+        // =================================================
+        // VALIDATION
+        // =================================================
 
-            return res.status(500).json({
+        if (
+            !parsed.reply ||
+            parsed.reply
+                .trim()
+                .toLowerCase() ===
+            text
+                .trim()
+                .toLowerCase()
+        ) {
 
-                success: false,
+            return res.json({
 
-                error:
-                    "No correction returned"
+                success: true,
+
+                ignored: true
             });
         }
+
+        // =================================================
+        // SUCCESS
+        // =================================================
 
         return res.json({
 
