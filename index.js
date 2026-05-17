@@ -826,10 +826,10 @@ Return ONLY JSON:
 }
 
 // =====================================================
-// AUTO QUIZ CLOCK
+// AUTO QUIZ CLOCK (DAILY 7PM WAT)
 // =====================================================
 
-let quizFiredThisWeek = false;
+let quizFiredToday = false;
 
 setInterval(async () => {
 
@@ -837,18 +837,6 @@ setInterval(async () => {
 
         const currentDate =
             new Date();
-
-        const currentDay =
-            new Intl.DateTimeFormat(
-                "en-GB",
-                {
-                    timeZone:
-                        "Africa/Lagos",
-
-                    weekday:
-                        "numeric"
-                }
-            ).format(currentDate);
 
         const currentHour =
             new Intl.DateTimeFormat(
@@ -864,17 +852,33 @@ setInterval(async () => {
                 }
             ).format(currentDate);
 
+        const currentMinute =
+            new Intl.DateTimeFormat(
+                "en-GB",
+                {
+                    timeZone:
+                        "Africa/Lagos",
+
+                    minute:
+                        "2-digit"
+                }
+            ).format(currentDate);
+
+        // =================================================
+        // FIRE QUIZ EVERYDAY BY 7PM
+        // =================================================
+
         if (
-            currentDay === "6" &&
-            currentHour === "20"
+            currentHour === "19" &&
+            currentMinute === "00"
         ) {
 
-            if (!quizFiredThisWeek) {
+            if (!quizFiredToday) {
 
-                quizFiredThisWeek = true;
+                quizFiredToday = true;
 
                 console.log(
-                    "⏰ Running scheduled quiz..."
+                    "⏰ Running DAILY scheduled quiz..."
                 );
 
                 const subject =
@@ -887,12 +891,13 @@ setInterval(async () => {
 
         } else {
 
-            if (quizFiredThisWeek) {
+            // RESET AFTER 7PM WINDOW PASSES
+            if (quizFiredToday) {
 
-                quizFiredThisWeek = false;
+                quizFiredToday = false;
 
                 console.log(
-                    "🔄 Quiz lock reset"
+                    "🔄 Daily quiz lock reset"
                 );
             }
         }
