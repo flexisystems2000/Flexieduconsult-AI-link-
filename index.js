@@ -239,25 +239,27 @@ app.get("/test", (req, res) => {
 });
 
 // =====================================================
-// AI ROUTE
+// AI ROUTE (DYNAMIC PERSONALITY)
 // =====================================================
 
 app.post("/ai", async (req, res) => {
-
     try {
+        const { prompt, image, botName } = req.body;
 
-        const {
-            prompt,
-            image
-        } = req.body;
+        // DYNAMIC IDENTITY MAP
+        // Easily add new bots by adding them to this object
+        const personalities = {
+            "Alexa": "You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.",
+            "Jarvis": "You are JARVIS for Flexi Digital Academy. Be educational and technical."
+        };
+
+        // Fallback to "Jarvis" if botName is missing or not recognized
+        const identity = personalities[botName] || personalities["Jarvis"];
 
         const parts = [
-
             {
-                text:
-`You are JARVIS for Flexi Digital Academy.
+                text: `${identity}
 
-Be educational.
 NO LATEX.
 Use Unicode symbols like:
 √ π ± ² ³
@@ -267,51 +269,33 @@ ${prompt || "Analyze this"}`
             }
         ];
 
+        // Handle image data if provided
         if (image) {
-
             parts.push({
-
                 inline_data: {
-
                     mime_type: "image/jpeg",
-
-                    data:
-                        image.replace(
-                            /^data:.*?;base64,/,
-                            ""
-                        )
+                    data: image.replace(/^data:.*?;base64,/, "")
                 }
             });
         }
 
-        const result =
-            await callGemini([
-                { parts }
-            ]);
+        // Call your Gemini engine
+        const result = await callGemini([{ parts }]);
 
         return res.json({
-
             success: true,
-
-            result:
-                result || "No response"
+            result: result || "No response received from the AI."
         });
 
     } catch (err) {
-
-        console.log(
-            "❌ AI Route Error:",
-            err.message
-        );
-
+        console.log("❌ AI Route Error:", err.message);
         return res.status(500).json({
-
             success: false,
-
-            error: "AI failed"
+            error: "AI processing failed"
         });
     }
 });
+
 
 // =====================================================
 // SMART GRAMMAR ROUTE
