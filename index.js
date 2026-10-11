@@ -571,34 +571,59 @@ ${text}`;
     }
 });
 
-// =====================================================
-// IMAGE ROUTE
+
+ // =====================================================
+// IMAGE ROUTE — PUTER AI
 // =====================================================
 
-app.get("/image", (req, res) => {
-
-    const prompt =
-        req.query.prompt;
+app.get("/image", async (req, res) => {
+    const prompt = String(req.query.prompt || "").trim();
 
     if (!prompt) {
-
         return res.status(400).json({
-
             success: false,
-
-            error:
-                "Prompt required"
+            error: "Prompt required"
         });
     }
 
-    return res.json({
+    if (!process.env.PUTER_AUTH_TOKEN) {
+        console.error(
+            "Puter image error: PUTER_AUTH_TOKEN is not configured."
+        );
 
-        success: true,
+        return res.status(503).json({
+            success: false,
+            error: "Image generation is not configured"
+        });
+    }
 
-        image:
-`https://image.pollinations.ai/prompt/${encodeURIComponent(prompt)}?width=1024&height=1024&nologo=true`
-    });
+    try {
+        const imageElement = await puter.ai.txt2img(prompt);
+
+        const imageUrl = imageElement?.src || imageElement?.url;
+
+        if (!imageUrl || typeof imageUrl !== "string") {
+            throw new Error("Puter did not return an image URL.");
+        }
+
+        return res.json({
+            success: true,
+            image: imageUrl
+        });
+
+    } catch (err) {
+        console.error(
+            "Puter image-generation error:",
+            err?.message || err
+        );
+
+        return res.status(502).json({
+            success: false,
+            error: "Image generation failed. Please try again."
+        });
+    }
 });
+
 
 // =====================================================
 // PDF ROUTE
