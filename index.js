@@ -3,7 +3,10 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const pdfParse = require("pdf-parse");
+const { init: initPuter } = require("@heyputer/puter.js/src/init.cjs");
 
+// Puter AI image-generation client
+const puter = initPuter(process.env.PUTER_AUTH_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 3000;
 
