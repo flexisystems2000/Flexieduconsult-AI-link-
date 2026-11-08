@@ -2,7 +2,6 @@ require("dotenv").config();
 
 const express = require("express");
 const axios = require("axios");
-const pdfParse = require("pdf-parse");
 const { init: initPuter } = require("@heyputer/puter.js/src/init.cjs");
 
 // Puter AI image-generation client
@@ -19,6 +18,44 @@ app.use(express.urlencoded({
     extended: true,
     limit: "15mb"
 }));
+
+// Private service-to-service authentication. Keep / and /test public for health checks.
+function requireJarvisAuth(req, res, next) {
+    const expected = String(process.env.JARVIS_API_KEY || "").trim();
+    if (!expected) {
+        return res.status(503).json({ success: false, error: "AI service authentication is not configured" });
+    }
+    const supplied = String(req.get("x-api-key") || req.get("authorization")?.replace(/^Bearer\s+/i, "") || "").trim();
+    const a = Buffer.from(supplied);
+    const b = Buffer.from(expected);
+    const valid = a.length === b.length && require("crypto").timingSafeEqual(a, b);
+    if (!valid) return res.status(401).json({ success: false, error: "Unauthorized service client" });
+    next();
+}
+app.use(["/ai", "/grammar", "/image"], requireJarvisAuth);
+
+const requestWindows = new Map();
+function limitServiceRequests(req, res, next) {
+    const key = String(req.ip || req.socket?.remoteAddress || "unknown");
+    const now = Date.now();
+    const window = requestWindows.get(key) || { start: now, count: 0 };
+    if (now - window.start >= 60_000) {
+        window.start = now;
+        window.count = 0;
+    }
+    window.count += 1;
+    requestWindows.set(key, window);
+    if (requestWindows.size > 5000) {
+        for (const [ip, value] of requestWindows) {
+            if (now - value.start > 120_000) requestWindows.delete(ip);
+        }
+    }
+    if (window.count > 90) {
+        return res.status(429).json({ success: false, error: "AI service rate limit exceeded" });
+    }
+    next();
+}
+app.use(["/ai", "/grammar", "/image"], limitServiceRequests);
 
 // =====================================================
 // GEMINI API KEYS
@@ -176,46 +213,6 @@ function getUpstreamStatus(err) {
 }
 
 // =====================================================
-// OCR SPACE
-// =====================================================
-
-async function ocrSpace(fileBase64) {
-    try {
-        const clean = fileBase64.replace(/^data:.*?;base64,/, "");
-        const formData = new URLSearchParams();
-
-        formData.append("base64Image", clean);
-        formData.append("language", "eng");
-        formData.append("OCREngine", "2");
-
-        const response = await axios.post(
-            "https://api.ocr.space/parse/image",
-            formData,
-            {
-                headers: {
-                    apikey: process.env.OCR_API_KEY,
-                    "Content-Type": "application/x-www-form-urlencoded"
-                },
-                timeout: 30000
-            }
-        );
-
-        return response.data
-            ?.ParsedResults
-            ?.map(r => r.ParsedText)
-            .join("\n")
-            ?.trim() || "";
-
-    } catch (err) {
-        console.error(
-            "[OCR] Request failed:",
-            err.response?.data || err.message
-        );
-        return "";
-    }
-}
-
-// =====================================================
 // NIGERIA TIME
 // =====================================================
 
@@ -256,6 +253,7 @@ app.get("/test", (req, res) => {
         message: "AI Server Online",
         model: process.env.GEMINI_MODEL || "gemini-2.5-flash",
         configuredGeminiKeys: API_KEYS.length,
+        authenticated: Boolean(process.env.JARVIS_API_KEY),
         time: getNigeriaTime()
     });
 });
@@ -266,7 +264,17 @@ app.get("/test", (req, res) => {
 
 app.post("/ai", async (req, res) => {
     try {
-        const { prompt, image, botName } = req.body;
+        const { prompt, image, botName, responseFormat } = req.body;
+        const promptText = String(prompt || "Analyze this");
+        if (promptText.length > 50000) {
+            return res.status(413).json({ success: false, error: "Prompt exceeds the 50,000-character limit" });
+        }
+        if (image && String(image).length > 12 * 1024 * 1024) {
+            return res.status(413).json({ success: false, error: "Image payload exceeds the 12 MB limit" });
+        }
+        if (responseFormat && !["json", "text"].includes(String(responseFormat).toLowerCase())) {
+            return res.status(400).json({ success: false, error: "responseFormat must be json or text" });
+        }
 
         const personalities = {
             "Alexa": "You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.",
@@ -284,7 +292,7 @@ Use Unicode symbols like:
 √ π ± ² ³
 
 User:
-${prompt || "Analyze this"}`
+${promptText}`
             }
         ];
 
@@ -297,7 +305,17 @@ ${prompt || "Analyze this"}`
             });
         }
 
-        const result = await callGemini([{ parts }]);
+        const wantsJson = String(responseFormat || "").toLowerCase() === "json";
+        const result = await callGemini([{ parts }], wantsJson);
+        if (wantsJson) {
+            let parsed;
+            try { parsed = JSON.parse(String(result || "")); }
+            catch (_) { return res.status(502).json({ success: false, error: "AI provider returned invalid JSON" }); }
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                return res.status(502).json({ success: false, error: "AI provider returned an invalid JSON object" });
+            }
+            return res.json({ success: true, result: JSON.stringify(parsed) });
+        }
 
         return res.json({
             success: true,
@@ -315,7 +333,6 @@ ${prompt || "Analyze this"}`
         return res.status(getUpstreamStatus(err)).json({
             success: false,
             error: "AI processing failed",
-            details: err.message,
             providerStatus: err.status || err.response?.status || null
         });
     }
@@ -329,11 +346,15 @@ app.post("/grammar", async (req, res) => {
     try {
         const { text } = req.body;
 
-        if (!text || text.trim().length < 2) {
+        if (!text || typeof text !== "string" || text.trim().length < 2) {
             return res.status(400).json({
                 success: false,
                 error: "Text required"
             });
+        }
+
+        if (text.length > 20000) {
+            return res.status(413).json({ success: false, error: "Text exceeds the 20,000-character limit" });
         }
 
         // STAGE 1: SEVERITY DETECTION
@@ -520,7 +541,6 @@ ${text}`;
         return res.status(getUpstreamStatus(err)).json({
             success: false,
             error: "Grammar engine failed",
-            details: err.message,
             providerStatus: err.status || err.response?.status || null
         });
     }
@@ -538,6 +558,9 @@ app.get("/image", async (req, res) => {
             success: false,
             error: "Prompt required"
         });
+    }
+    if (prompt.length > 4000) {
+        return res.status(413).json({ success: false, error: "Image prompt exceeds the 4,000-character limit" });
     }
 
     if (!process.env.PUTER_AUTH_TOKEN) {
@@ -576,231 +599,6 @@ app.get("/image", async (req, res) => {
         });
     }
 });
-
-// =====================================================
-// PDF ROUTE
-// =====================================================
-
-app.post("/pdf", async (req, res) => {
-    try {
-        const { fileBase64, prompt } = req.body;
-
-        if (!fileBase64) {
-            return res.status(400).json({
-                success: false,
-                error: "No PDF provided"
-            });
-        }
-
-        const buffer = Buffer.from(
-            fileBase64.replace(
-                /^data:application\/pdf;base64,/,
-                ""
-            ),
-            "base64"
-        );
-
-        let text = "";
-
-        try {
-            const pdfData = await pdfParse(buffer);
-            text = pdfData.text || "";
-        } catch (err) {
-            console.error("[PDF] Text extraction failed:", err.message);
-        }
-
-        if (text.trim().length < 50) {
-            text = await ocrSpace(fileBase64);
-        }
-
-        if (!text || text.trim().length < 5) {
-            return res.json({
-                success: false,
-                error: "Unreadable document"
-            });
-        }
-
-        const result = await callGemini([
-            {
-                parts: [
-                    {
-                        text:
-`Analyze this document:
-
-${text}
-
-User Request:
-${prompt || "Summarize"}`
-                    }
-                ]
-            }
-        ]);
-
-        return res.json({
-            success: true,
-            result
-        });
-
-    } catch (err) {
-        console.error("❌ PDF Route Error:", {
-            message: err.message,
-            status: err.status || err.response?.status || null,
-            providerResponse: err.providerResponse || err.response?.data || null
-        });
-
-        return res.status(getUpstreamStatus(err)).json({
-            success: false,
-            error: "PDF failed",
-            details: err.message,
-            providerStatus: err.status || err.response?.status || null
-        });
-    }
-});
-
-// =====================================================
-// QUIZ GENERATION ROUTE
-// =====================================================
-
-app.post("/generate-quiz", async (req, res) => {
-    try {
-        const subject = await runQuizGenerationPipeline();
-
-        return res.json({
-            success: true,
-            message: `Quiz deployed for ${subject}`
-        });
-
-    } catch (err) {
-        console.error("❌ Quiz Route Error:", {
-            message: err.message,
-            status: err.status || err.response?.status || null,
-            providerResponse: err.providerResponse || err.response?.data || null
-        });
-
-        return res.status(getUpstreamStatus(err)).json({
-            success: false,
-            error: "Quiz generation failed",
-            details: err.message,
-            providerStatus: err.status || err.response?.status || null
-        });
-    }
-});
-
-// =====================================================
-// QUIZ ENGINE
-// =====================================================
-
-async function runQuizGenerationPipeline() {
-    const subjects = [
-        "Mathematics",
-        "Physics",
-        "Chemistry",
-        "Biology",
-        "English Language"
-    ];
-
-    const randomSubject =
-        subjects[Math.floor(Math.random() * subjects.length)];
-
-    const prompt =
-`Generate exactly 5 Post-UTME multiple choice questions for ${randomSubject}.
-
-Return ONLY JSON:
-
-{
-  "subject": "${randomSubject}",
-  "quizText": "formatted quiz",
-  "answers": ["A","B","C","D","A"]
-}`;
-
-    const resultJson = await callGemini(
-        [
-            {
-                parts: [
-                    {
-                        text: prompt
-                    }
-                ]
-            }
-        ],
-        true
-    );
-
-    const quizData = JSON.parse(resultJson);
-
-    if (
-        !quizData.subject ||
-        !quizData.quizText ||
-        !Array.isArray(quizData.answers)
-    ) {
-        throw new Error("Gemini returned invalid quiz JSON");
-    }
-
-    await axios.post(
-        "https://jarvisaiserver.onrender.com/webhook/trigger-quiz",
-        {
-            subject: quizData.subject,
-            quizText: quizData.quizText,
-            answers: quizData.answers
-        },
-        {
-            timeout: 30000
-        }
-    );
-
-    return randomSubject;
-}
-
-// =====================================================
-// AUTO QUIZ CLOCK (DAILY 7PM WAT)
-// =====================================================
-
-let quizFiredToday = false;
-
-setInterval(async () => {
-    try {
-        const currentDate = new Date();
-
-        const currentHour = new Intl.DateTimeFormat(
-            "en-GB",
-            {
-                timeZone: "Africa/Lagos",
-                hour: "2-digit",
-                hour12: false
-            }
-        ).format(currentDate);
-
-        const currentMinute = new Intl.DateTimeFormat(
-            "en-GB",
-            {
-                timeZone: "Africa/Lagos",
-                minute: "2-digit"
-            }
-        ).format(currentDate);
-
-        if (currentHour === "19" && currentMinute === "00") {
-            if (!quizFiredToday) {
-                quizFiredToday = true;
-
-                console.log("⏰ Running DAILY scheduled quiz...");
-
-                const subject = await runQuizGenerationPipeline();
-
-                console.log(`✅ Quiz completed for ${subject}`);
-            }
-        } else if (quizFiredToday) {
-            quizFiredToday = false;
-            console.log("🔄 Daily quiz lock reset");
-        }
-
-    } catch (err) {
-        console.error("⚠️ Quiz Clock Error:", {
-            message: err.message,
-            status: err.status || err.response?.status || null,
-            providerResponse: err.providerResponse || err.response?.data || null
-        });
-    }
-}, 60000);
 
 // =====================================================
 // START SERVER
