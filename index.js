@@ -3,11 +3,19 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const { init: initPuter } = require("@heyputer/puter.js/src/init.cjs");
+const { DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_REQUEST_BYTES, correlationId, requestMetrics, classifyProviderError } = require("./gateway-utils");
 
 // Puter AI image-generation client
 const puter = initPuter(process.env.PUTER_AUTH_TOKEN);
 const app = express();
 const PORT = process.env.PORT || 3000;
+const MAX_PROMPT_CHARS = Math.max(1000, Math.min(Number(process.env.AI_MAX_PROMPT_CHARS) || DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_PROMPT_CHARS));
+const MAX_REQUEST_BYTES = Math.max(1024 * 1024, Math.min(Number(process.env.AI_MAX_REQUEST_BYTES) || DEFAULT_MAX_REQUEST_BYTES, DEFAULT_MAX_REQUEST_BYTES));
+app.use((req, res, next) => {
+    req.correlationId = correlationId(req.get("x-correlation-id"));
+    res.setHeader("x-correlation-id", req.correlationId);
+    next();
+});
 
 // =====================================================
 // MIDDLEWARE
@@ -23,13 +31,17 @@ app.use(express.urlencoded({
 function requireJarvisAuth(req, res, next) {
     const expected = String(process.env.JARVIS_API_KEY || "").trim();
     if (!expected) {
-        return res.status(503).json({ success: false, error: "AI service authentication is not configured" });
+        console.error("[AI Link] Authentication pre-rejection", { correlationId: req.correlationId, reason: "missing_server_secret", path: req.path });
+        return res.status(503).json({ success: false, code: "AUTH_NOT_CONFIGURED", error: "AI service authentication is not configured", correlationId: req.correlationId });
     }
     const supplied = String(req.get("x-api-key") || req.get("authorization")?.replace(/^Bearer\s+/i, "") || "").trim();
     const a = Buffer.from(supplied);
     const b = Buffer.from(expected);
     const valid = a.length === b.length && require("crypto").timingSafeEqual(a, b);
-    if (!valid) return res.status(401).json({ success: false, error: "Unauthorized service client" });
+    if (!valid) {
+        console.warn("[AI Link] Authentication pre-rejection", { correlationId: req.correlationId, reason: "invalid_client_secret", path: req.path });
+        return res.status(401).json({ success: false, code: "AUTH_INVALID", error: "Unauthorized service client", correlationId: req.correlationId });
+    }
     next();
 }
 app.use(["/ai", "/grammar", "/image"], requireJarvisAuth);
@@ -51,7 +63,8 @@ function limitServiceRequests(req, res, next) {
         }
     }
     if (window.count > 90) {
-        return res.status(429).json({ success: false, error: "AI service rate limit exceeded" });
+        console.warn("[AI Link] Service rate limit pre-rejection", { correlationId: req.correlationId, path: req.path });
+        return res.status(429).json({ success: false, code: "SERVICE_RATE_LIMIT", error: "AI service rate limit exceeded", correlationId: req.correlationId });
     }
     next();
 }
@@ -263,29 +276,36 @@ app.get("/test", (req, res) => {
 // =====================================================
 
 app.post("/ai", async (req, res) => {
+    const metrics = requestMetrics(req.body);
+    const { promptChars, requestBytes, responseFormat, model } = metrics;
+    const diagnostic = { correlationId: req.correlationId, promptChars, requestBytes, responseFormat, model };
     try {
-        const { prompt, image, botName, responseFormat } = req.body;
+        const { prompt, image, botName, responseFormat: requestedFormat } = req.body || {};
         const promptText = String(prompt || "Analyze this");
-        if (promptText.length > 50000) {
-            return res.status(413).json({ success: false, error: "Prompt exceeds the 50,000-character limit" });
+        const wantsJson = String(requestedFormat || "").toLowerCase() === "json";
+        if (requestedFormat && !["json", "text"].includes(String(requestedFormat).toLowerCase())) {
+            console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "invalid_response_format" });
+            return res.status(400).json({ success: false, code: "INVALID_RESPONSE_FORMAT", error: "responseFormat must be json or text", ...diagnostic });
+        }
+        if (promptChars > MAX_PROMPT_CHARS) {
+            console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "prompt_character_budget", maxPromptChars: MAX_PROMPT_CHARS });
+            return res.status(413).json({ success: false, code: "PROMPT_TOO_LARGE", error: "Prompt exceeds the configured gateway prompt limit", maxPromptChars: MAX_PROMPT_CHARS, ...diagnostic });
+        }
+        if (requestBytes > MAX_REQUEST_BYTES) {
+            console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "serialized_request_budget", maxRequestBytes: MAX_REQUEST_BYTES });
+            return res.status(413).json({ success: false, code: "REQUEST_TOO_LARGE", error: "Serialized AI request exceeds the configured request-size limit", maxRequestBytes: MAX_REQUEST_BYTES, ...diagnostic });
         }
         if (image && String(image).length > 12 * 1024 * 1024) {
-            return res.status(413).json({ success: false, error: "Image payload exceeds the 12 MB limit" });
+            console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "image_payload_budget" });
+            return res.status(413).json({ success: false, code: "IMAGE_TOO_LARGE", error: "Image payload exceeds the 12 MB limit", ...diagnostic });
         }
-        if (responseFormat && !["json", "text"].includes(String(responseFormat).toLowerCase())) {
-            return res.status(400).json({ success: false, error: "responseFormat must be json or text" });
-        }
-
         const personalities = {
             "Alexa": "You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.",
             "Jarvis": "You are JARVIS for Flexi Digital Academy. Be educational and technical."
         };
-
         const identity = personalities[botName] || personalities["Jarvis"];
-
-        const parts = [
-            {
-                text: `${identity}
+        const parts = [{
+            text: `${identity}
 
 NO LATEX.
 Use Unicode symbols like:
@@ -293,47 +313,37 @@ Use Unicode symbols like:
 
 User:
 ${promptText}`
-            }
-        ];
-
-        if (image) {
-            parts.push({
-                inline_data: {
-                    mime_type: "image/jpeg",
-                    data: image.replace(/^data:.*?;base64,/, "")
-                }
-            });
-        }
-
-        const wantsJson = String(responseFormat || "").toLowerCase() === "json";
+        }];
+        if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image.replace(/^data:.*?;base64,/, "") } });
+        console.info("[AI Link] Provider request", diagnostic);
         const result = await callGemini([{ parts }], wantsJson);
         if (wantsJson) {
             let parsed;
             try { parsed = JSON.parse(String(result || "")); }
-            catch (_) { return res.status(502).json({ success: false, error: "AI provider returned invalid JSON" }); }
-            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
-                return res.status(502).json({ success: false, error: "AI provider returned an invalid JSON object" });
+            catch (_) {
+                console.error("[AI Link] Structured response rejected", { ...diagnostic, reason: "invalid_json" });
+                return res.status(502).json({ success: false, code: "INVALID_STRUCTURED_RESPONSE", error: "AI provider returned invalid JSON", ...diagnostic });
             }
-            return res.json({ success: true, result: JSON.stringify(parsed) });
+            if (!parsed || typeof parsed !== "object" || Array.isArray(parsed)) {
+                console.error("[AI Link] Structured response rejected", { ...diagnostic, reason: "not_json_object" });
+                return res.status(502).json({ success: false, code: "INVALID_STRUCTURED_RESPONSE", error: "AI provider returned an invalid JSON object", ...diagnostic });
+            }
+            return res.json({ success: true, result: JSON.stringify(parsed), ...diagnostic });
         }
-
-        return res.json({
-            success: true,
-            result: result || "No response received from the AI."
-        });
-
+        return res.json({ success: true, result: result || "No response received from the AI.", ...diagnostic });
     } catch (err) {
-        console.error("❌ AI Route Error:", {
-            message: err.message,
-            status: err.status || err.response?.status || null,
-            code: err.code || null,
-            providerResponse: err.providerResponse || err.response?.data || null
+        const classified = classifyProviderError(err);
+        console.error("[AI Link] Provider failure", {
+            ...diagnostic, errorCode: classified.code,
+            providerStatus: err.status || err.response?.status || null,
+            providerCode: err.code || null,
+            providerMessage: String(err.message || "Provider request failed").slice(0, 500)
         });
-
-        return res.status(getUpstreamStatus(err)).json({
-            success: false,
-            error: "AI processing failed",
-            providerStatus: err.status || err.response?.status || null
+        return res.status(classified.status).json({
+            success: false, code: classified.code,
+            error: classified.category === "provider_rate_limit" ? "AI provider rate limit reached" :
+                classified.category === "provider_timeout" ? "AI provider request timed out" : "AI processing failed",
+            providerStatus: err.status || err.response?.status || null, ...diagnostic
         });
     }
 });
@@ -598,6 +608,20 @@ app.get("/image", async (req, res) => {
             error: "Image generation failed. Please try again."
         });
     }
+});
+
+// Normalize body-parser failures into a structured diagnostic response.
+app.use((err, req, res, next) => {
+    if (res.headersSent) return next(err);
+    if (err?.type === "entity.too.large" || err?.status === 413) {
+        console.warn("[AI Link] Request parser pre-rejection", { correlationId: req.correlationId, reason: "request_body_too_large", contentLength: req.get("content-length") || null });
+        return res.status(413).json({ success: false, code: "REQUEST_BODY_TOO_LARGE", error: "HTTP request body exceeds the 15 MB parser limit", correlationId: req.correlationId, requestBytes: Number(req.get("content-length")) || null });
+    }
+    if (err instanceof SyntaxError && err.status === 400 && "body" in err) {
+        return res.status(400).json({ success: false, code: "INVALID_REQUEST_JSON", error: "Request body must contain valid JSON", correlationId: req.correlationId });
+    }
+    console.error("[AI Link] Unhandled route error", { correlationId: req.correlationId, message: String(err?.message || "Unknown error").slice(0, 300) });
+    return res.status(500).json({ success: false, code: "INTERNAL_ERROR", error: "AI service request failed", correlationId: req.correlationId });
 });
 
 // =====================================================

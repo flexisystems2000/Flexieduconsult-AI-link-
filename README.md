@@ -1,4 +1,4 @@
-# Flexieduconsult AI Link — v1.4.0
+# Flexieduconsult AI Link — v1.5.0
 
 Authenticated AI gateway for JARVIS. It provides Gemini reasoning, image understanding, grammar assistance, and Puter image generation.
 
@@ -12,6 +12,14 @@ PDF creation/extraction belongs to the Python document service. ALOC retrieval, 
 
 ## Setup
 Run `npm install && npm start` with Node.js 18+. Set `JARVIS_API_KEY` to a long random secret and set the exact same value as `AI_API_KEY` in JARVIS. `/ai`, `/grammar`, and `/image` require `x-api-key` or Bearer authentication. Health routes remain public.
+
+## Request budgets and diagnostics
+
+`POST /ai` keeps a hard 50,000-character prompt ceiling by default. The gateway measures both prompt characters and the serialized JSON request size before calling Gemini. Pre-provider rejections return structured JSON with a stable `code`, `correlationId`, `promptChars`, `requestBytes`, `responseFormat`, and `model`; logs record the same diagnostics without logging API credentials. The response includes an `x-correlation-id` header.
+
+- `AI_MAX_PROMPT_CHARS` — optional lower prompt ceiling; defaults to 50,000 and cannot raise the hard ceiling.
+- `AI_MAX_REQUEST_BYTES` — optional serialized JSON request limit; defaults to 12 MB and cannot raise that limit.
+- Error codes distinguish `PROMPT_TOO_LARGE`, `REQUEST_TOO_LARGE`, `GEMINI_RATE_LIMIT`, `GEMINI_AUTH_ERROR`, `GEMINI_TIMEOUT`, `GEMINI_PROVIDER_ERROR`, and `INVALID_STRUCTURED_RESPONSE`.
 
 ## Environment
 - `PORT` — HTTP port, default 3000.

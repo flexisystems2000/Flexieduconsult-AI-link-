@@ -1,7 +1,7 @@
 {
   "name": "jarvis-ai-server",
-  "version": "1.4.0",
-  "description": "Authenticated Gemini AI gateway for JARVIS with validated structured JSON intent responses",
+  "version": "1.5.0",
+  "description": "Authenticated Gemini AI gateway for JARVIS with prompt budgets, correlation diagnostics and validated structured JSON",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
@@ -9,7 +9,8 @@
   "scripts": {
     "start": "node index.js",
     "dev": "nodemon index.js",
-    "check": "node --check index.js"
+    "check": "node --check index.js && node --check gateway-utils.js && node --check test/gateway-utils.test.js",
+    "test": "node --test"
   },
   "dependencies": {
     "axios": "^1.6.0",
