@@ -41,6 +41,9 @@ async function openLiveSession(socket, diagnostics) {
   if (!API_KEYS.length) throw new Error('No Gemini API keys are configured on AI Link.');
   const GoogleGenAI = await getGoogleGenAI();
   let lastError;
+  // These buffers must live in the same scope as the Gemini onmessage callback.
+  let callerTranscriptBuffer = '';
+  let lastCallerTranscriptSent = '';
   for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
     const slot = nextKey;
     const apiKey = API_KEYS[nextKey];
@@ -171,8 +174,6 @@ function attachVoiceGateway(server) {
     let session;
     let closed = false;
     const diagnostics = { inputFrames: 0, inputBytes: 0, outputFrames: 0, outputBytes: 0 };
-    let callerTranscriptBuffer = '';
-    let lastCallerTranscriptSent = '';
     socket.on('message', async raw => {
       let message;
       try { message = JSON.parse(raw.toString()); }
