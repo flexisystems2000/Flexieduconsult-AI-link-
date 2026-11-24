@@ -44,6 +44,36 @@ async function openLiveSession(socket, diagnostics) {
   // These buffers must live in the same scope as the Gemini onmessage callback.
   let callerTranscriptBuffer = '';
   let lastCallerTranscriptSent = '';
+  let callerTranscriptTimer = null;
+
+  // Gemini's JS SDK may omit the transcription "finished" flag even when
+  // it streams a sentence in multiple fragments. Buffer fragments and flush
+  // after a short quiet period, or immediately when an explicit final flag
+  // / completed model turn is received.
+  const flushCallerTranscript = source => {
+    if (callerTranscriptTimer) {
+      clearTimeout(callerTranscriptTimer);
+      callerTranscriptTimer = null;
+    }
+    const finalTranscript = callerTranscriptBuffer.trim();
+    callerTranscriptBuffer = '';
+    if (!finalTranscript || finalTranscript === lastCallerTranscriptSent) return;
+    lastCallerTranscriptSent = finalTranscript;
+    console.log('[AI Link Voice Audio] Caller speech transcription finalized', {
+      characters: finalTranscript.length,
+      source
+    });
+    safeSend(socket, { type: 'caller_transcript', text: finalTranscript });
+  };
+
+  const queueCallerTranscriptFlush = () => {
+    if (callerTranscriptTimer) clearTimeout(callerTranscriptTimer);
+    callerTranscriptTimer = setTimeout(() => {
+      callerTranscriptTimer = null;
+      flushCallerTranscript('quiet-period');
+    }, 1200);
+  };
+
   for (let attempt = 0; attempt < API_KEYS.length; attempt++) {
     const slot = nextKey;
     const apiKey = API_KEYS[nextKey];
@@ -93,19 +123,12 @@ async function openLiveSession(socket, diagnostics) {
             const callerTranscript = String(callerTranscriptEvent?.text || '').trim();
             if (callerTranscript) {
               callerTranscriptBuffer += (callerTranscriptBuffer ? ' ' : '') + callerTranscript;
-              // Some SDK responses omit "finished" on final transcription
-              // messages; treat anything other than explicit false as final.
-              if (callerTranscriptEvent?.finished !== false) {
-                const finalTranscript = callerTranscriptBuffer.trim();
-                callerTranscriptBuffer = '';
-                if (finalTranscript && finalTranscript !== lastCallerTranscriptSent) {
-                  lastCallerTranscriptSent = finalTranscript;
-                  console.log('[AI Link Voice Audio] Caller speech transcription finalized', {
-                    characters: finalTranscript.length,
-                    source: message?.inputTranscription ? 'top-level' : 'serverContent'
-                  });
-                  safeSend(socket, { type: 'caller_transcript', text: finalTranscript });
-                }
+              if (callerTranscriptEvent?.finished === true) {
+                flushCallerTranscript(message?.inputTranscription ? 'top-level-finished' : 'serverContent-finished');
+              } else {
+                // Do not assume a missing "finished" flag means this fragment
+                // is the whole sentence. The SDK has been observed to omit it.
+                queueCallerTranscriptFlush();
               }
             }
             const transcript = content?.outputTranscription?.text;
@@ -126,6 +149,8 @@ async function openLiveSession(socket, diagnostics) {
               safeSend(socket, { type: 'transcript', text: transcript });
             }
             if (content?.turnComplete) {
+              // Flush any caller command once Gemini has completed its reply.
+              flushCallerTranscript('turn-complete');
               console.log('[AI Link Voice Audio] Gemini turn complete', {
                 inputFrames: diagnostics.inputFrames, outputFrames: diagnostics.outputFrames
               });
