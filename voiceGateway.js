@@ -11,7 +11,7 @@ const API_KEYS = [
   process.env.GEMINI_API_KEY_5
 ].map(value => String(value || '').trim()).filter(Boolean);
 
-const MODEL = String(process.env.GEMINI_LIVE_MODEL || 'gemini-2.5-flash-native-audio-preview-12-2025').trim();
+const MODEL = String(process.env.GEMINI_LIVE_MODEL || 'gemini-3.8-live').trim();
 const SYSTEM_INSTRUCTION = String(process.env.GEMINI_LIVE_SYSTEM_INSTRUCTION ||
   'You are JARVIS, the voice assistant for Flexi Educational Consult. Speak naturally, warmly, clearly and concisely. Listen carefully and answer the caller directly. Use Nigerian English naturally when appropriate. Do not claim to perform an action unless it has actually been completed.');
 
