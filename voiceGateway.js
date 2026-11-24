@@ -86,21 +86,20 @@ async function openLiveSession(socket, diagnostics) {
             // Transcription can also arrive in fragments, so buffer until finished.
             const callerTranscriptEvent =
               message?.inputTranscription ||
-              content?.inputTranscription ||
-              message?.interimInputTranscription ||
-              content?.interimInputTranscription;
+              content?.inputTranscription;
             const callerTranscript = String(callerTranscriptEvent?.text || '').trim();
             if (callerTranscript) {
               callerTranscriptBuffer += (callerTranscriptBuffer ? ' ' : '') + callerTranscript;
-              if (callerTranscriptEvent?.finished === true) {
+              // Some SDK responses omit "finished" on final transcription
+              // messages; treat anything other than explicit false as final.
+              if (callerTranscriptEvent?.finished !== false) {
                 const finalTranscript = callerTranscriptBuffer.trim();
                 callerTranscriptBuffer = '';
                 if (finalTranscript && finalTranscript !== lastCallerTranscriptSent) {
                   lastCallerTranscriptSent = finalTranscript;
                   console.log('[AI Link Voice Audio] Caller speech transcription finalized', {
                     characters: finalTranscript.length,
-                    source: message?.inputTranscription ? 'top-level' :
-                      content?.inputTranscription ? 'serverContent' : 'interim'
+                    source: message?.inputTranscription ? 'top-level' : 'serverContent'
                   });
                   safeSend(socket, { type: 'caller_transcript', text: finalTranscript });
                 }
