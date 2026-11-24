@@ -8,7 +8,7 @@
   },
   "scripts": {
     "start": "node voice-server.js",
-    "dev": "nodemon index.js",
+    "dev": "nodemon voice-server.js",
     "check": "node --check index.js && node --check voice-server.js && node --check voiceGateway.js && node --check gateway-utils.js && node --check test/gateway-utils.test.js",
     "test": "node --test"
   },
