@@ -81,10 +81,30 @@ async function openLiveSession(socket, diagnostics) {
                 safeSend(socket, { type: 'audio', data: audioData, mimeType });
               }
             }
-            const callerTranscript = content?.inputTranscription?.text;
+            // Gemini Live SDK versions/models may expose input transcription
+            // either under serverContent or as a top-level server message.
+            // Transcription can also arrive in fragments, so buffer until finished.
+            const callerTranscriptEvent =
+              message?.inputTranscription ||
+              content?.inputTranscription ||
+              message?.interimInputTranscription ||
+              content?.interimInputTranscription;
+            const callerTranscript = String(callerTranscriptEvent?.text || '').trim();
             if (callerTranscript) {
-              console.log('[AI Link Voice Audio] Caller speech transcription received', { characters: callerTranscript.length });
-              safeSend(socket, { type: 'caller_transcript', text: callerTranscript });
+              callerTranscriptBuffer += (callerTranscriptBuffer ? ' ' : '') + callerTranscript;
+              if (callerTranscriptEvent?.finished === true) {
+                const finalTranscript = callerTranscriptBuffer.trim();
+                callerTranscriptBuffer = '';
+                if (finalTranscript && finalTranscript !== lastCallerTranscriptSent) {
+                  lastCallerTranscriptSent = finalTranscript;
+                  console.log('[AI Link Voice Audio] Caller speech transcription finalized', {
+                    characters: finalTranscript.length,
+                    source: message?.inputTranscription ? 'top-level' :
+                      content?.inputTranscription ? 'serverContent' : 'interim'
+                  });
+                  safeSend(socket, { type: 'caller_transcript', text: finalTranscript });
+                }
+              }
             }
             const transcript = content?.outputTranscription?.text;
             if (transcript) {
@@ -152,6 +172,8 @@ function attachVoiceGateway(server) {
     let session;
     let closed = false;
     const diagnostics = { inputFrames: 0, inputBytes: 0, outputFrames: 0, outputBytes: 0 };
+    let callerTranscriptBuffer = '';
+    let lastCallerTranscriptSent = '';
     socket.on('message', async raw => {
       let message;
       try { message = JSON.parse(raw.toString()); }
