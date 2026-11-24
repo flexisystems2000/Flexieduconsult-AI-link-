@@ -59,26 +59,42 @@ async function openLiveSession(socket, diagnostics) {
           onmessage(message) {
             const content = message?.serverContent;
             if (content?.interrupted) safeSend(socket, { type: 'interrupted' });
-            for (const part of content?.modelTurn?.parts || []) {
-              if (part?.inlineData?.data) {
+            const parts = content?.modelTurn?.parts || [];
+            for (const part of parts) {
+              // The Google GenAI SDK normally exposes audio as inlineData.
+              // Accept equivalent normalized shapes as well, without assuming
+              // that a text transcription is itself playable audio.
+              const audioPart = part?.inlineData || part?.inline_data || part?.audio;
+              const audioData = typeof audioPart === 'string'
+                ? audioPart
+                : (audioPart?.data || audioPart?.bytes);
+              if (typeof audioData === 'string' && audioData.length) {
+                const mimeType = audioPart?.mimeType || audioPart?.mime_type || 'audio/pcm;rate=24000';
                 diagnostics.outputFrames++;
-                diagnostics.outputBytes += Buffer.byteLength(part.inlineData.data, 'base64');
+                diagnostics.outputBytes += Buffer.byteLength(audioData, 'base64');
                 if (diagnostics.outputFrames === 1 || diagnostics.outputFrames % 25 === 0) {
                   console.log('[AI Link Voice Audio] Gemini audio generated', {
-                    frames: diagnostics.outputFrames, bytes: diagnostics.outputBytes,
-                    mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000'
+                    frames: diagnostics.outputFrames, bytes: diagnostics.outputBytes, mimeType
                   });
                 }
-                safeSend(socket, {
-                  type: 'audio',
-                  data: part.inlineData.data,
-                  mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000'
-                });
+                safeSend(socket, { type: 'audio', data: audioData, mimeType });
               }
             }
             const transcript = content?.outputTranscription?.text;
             if (transcript) {
               console.log('[AI Link Voice Audio] Gemini output transcript received', { characters: transcript.length });
+              if (diagnostics.outputFrames === 0) {
+                console.warn('[AI Link Voice Audio] Transcript arrived without audio; inspecting response shape', {
+                  serverContentKeys: Object.keys(content || {}),
+                  modelTurnPresent: Boolean(content?.modelTurn),
+                  partsCount: parts.length,
+                  partShapes: parts.slice(0, 4).map(part => ({
+                    keys: Object.keys(part || {}),
+                    inlineDataKeys: Object.keys(part?.inlineData || part?.inline_data || part?.audio || {})
+                  })),
+                  usageMetadataKeys: Object.keys(message?.usageMetadata || {})
+                });
+              }
               safeSend(socket, { type: 'transcript', text: transcript });
             }
             if (content?.turnComplete) {
