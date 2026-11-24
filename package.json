@@ -1,22 +1,24 @@
 {
   "name": "jarvis-ai-server",
-  "version": "1.5.0",
-  "description": "Authenticated Gemini AI gateway for JARVIS with prompt budgets, correlation diagnostics and validated structured JSON",
+  "version": "1.6.0",
+  "description": "Authenticated Gemini AI gateway for JARVIS with real-time Gemini Live voice sessions",
   "main": "index.js",
   "engines": {
     "node": ">=18.0.0"
   },
   "scripts": {
-    "start": "node index.js",
+    "start": "node voice-server.js",
     "dev": "nodemon index.js",
-    "check": "node --check index.js && node --check gateway-utils.js && node --check test/gateway-utils.test.js",
+    "check": "node --check index.js && node --check voice-server.js && node --check voiceGateway.js && node --check gateway-utils.js && node --check test/gateway-utils.test.js",
     "test": "node --test"
   },
   "dependencies": {
     "axios": "^1.6.0",
     "dotenv": "^16.4.5",
     "express": "^4.18.0",
-    "@heyputer/puter.js": "latest"
+    "@heyputer/puter.js": "latest",
+    "@google/genai": "2.32.0",
+    "ws": "^8.18.0"
   },
   "devDependencies": {
     "nodemon": "^3.0.0"
