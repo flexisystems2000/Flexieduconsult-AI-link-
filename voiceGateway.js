@@ -53,6 +53,7 @@ async function openLiveSession(socket, diagnostics) {
           responseModalities: ['AUDIO'],
           systemInstruction: { parts: [{ text: SYSTEM_INSTRUCTION }] },
           speechConfig: { voiceConfig: { prebuiltVoiceConfig: { voiceName: 'Aoede' } } },
+          inputAudioTranscription: {},
           outputAudioTranscription: {}
         },
         callbacks: {
@@ -79,6 +80,11 @@ async function openLiveSession(socket, diagnostics) {
                 }
                 safeSend(socket, { type: 'audio', data: audioData, mimeType });
               }
+            }
+            const callerTranscript = content?.inputTranscription?.text;
+            if (callerTranscript) {
+              console.log('[AI Link Voice Audio] Caller speech transcription received', { characters: callerTranscript.length });
+              safeSend(socket, { type: 'caller_transcript', text: callerTranscript });
             }
             const transcript = content?.outputTranscription?.text;
             if (transcript) {
