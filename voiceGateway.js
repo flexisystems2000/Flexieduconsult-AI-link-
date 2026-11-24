@@ -37,7 +37,7 @@ function safeSend(socket, payload) {
   if (socket.readyState === WebSocket.OPEN) socket.send(JSON.stringify(payload));
 }
 
-async function openLiveSession(socket) {
+async function openLiveSession(socket, diagnostics) {
   if (!API_KEYS.length) throw new Error('No Gemini API keys are configured on AI Link.');
   const GoogleGenAI = await getGoogleGenAI();
   let lastError;
@@ -61,6 +61,14 @@ async function openLiveSession(socket) {
             if (content?.interrupted) safeSend(socket, { type: 'interrupted' });
             for (const part of content?.modelTurn?.parts || []) {
               if (part?.inlineData?.data) {
+                diagnostics.outputFrames++;
+                diagnostics.outputBytes += Buffer.byteLength(part.inlineData.data, 'base64');
+                if (diagnostics.outputFrames === 1 || diagnostics.outputFrames % 25 === 0) {
+                  console.log('[AI Link Voice Audio] Gemini audio generated', {
+                    frames: diagnostics.outputFrames, bytes: diagnostics.outputBytes,
+                    mimeType: part.inlineData.mimeType || 'audio/pcm;rate=24000'
+                  });
+                }
                 safeSend(socket, {
                   type: 'audio',
                   data: part.inlineData.data,
@@ -69,8 +77,16 @@ async function openLiveSession(socket) {
               }
             }
             const transcript = content?.outputTranscription?.text;
-            if (transcript) safeSend(socket, { type: 'transcript', text: transcript });
-            if (content?.turnComplete) safeSend(socket, { type: 'turn_complete' });
+            if (transcript) {
+              console.log('[AI Link Voice Audio] Gemini output transcript received', { characters: transcript.length });
+              safeSend(socket, { type: 'transcript', text: transcript });
+            }
+            if (content?.turnComplete) {
+              console.log('[AI Link Voice Audio] Gemini turn complete', {
+                inputFrames: diagnostics.inputFrames, outputFrames: diagnostics.outputFrames
+              });
+              safeSend(socket, { type: 'turn_complete' });
+            }
           },
           onerror(error) {
             console.error('[AI Link Voice] Gemini Live session error', {
@@ -113,6 +129,7 @@ function attachVoiceGateway(server) {
   wss.on('connection', async socket => {
     let session;
     let closed = false;
+    const diagnostics = { inputFrames: 0, inputBytes: 0, outputFrames: 0, outputBytes: 0 };
     socket.on('message', async raw => {
       let message;
       try { message = JSON.parse(raw.toString()); }
@@ -123,12 +140,21 @@ function attachVoiceGateway(server) {
           safeSend(socket, { type: 'error', code: 'INVALID_AUDIO', error: 'Audio payload is missing or too large.' }); return;
         }
         try {
+          const audioBytes = Buffer.byteLength(message.data, 'base64');
           session.sendRealtimeInput({
             audio: {
               data: message.data,
               mimeType: String(message.mimeType || 'audio/pcm;rate=16000')
             }
           });
+          diagnostics.inputFrames++;
+          diagnostics.inputBytes += audioBytes;
+          if (diagnostics.inputFrames === 1 || diagnostics.inputFrames % 50 === 0) {
+            console.log('[AI Link Voice Audio] Caller audio received from JARVIS', {
+              frames: diagnostics.inputFrames, bytes: diagnostics.inputBytes,
+              mimeType: String(message.mimeType || 'audio/pcm;rate=16000')
+            });
+          }
         } catch (error) {
           safeSend(socket, { type: 'error', code: 'AUDIO_FORWARD_FAILED', error: 'Could not forward caller audio.' });
         }
@@ -146,9 +172,10 @@ function attachVoiceGateway(server) {
     socket.on('error', error => console.warn('[AI Link Voice] WebSocket client error:', error.message));
 
     try {
-      session = await openLiveSession(socket);
+      session = await openLiveSession(socket, diagnostics);
       if (closed) { try { session.close(); } catch {} return; }
       safeSend(socket, { type: 'ready', model: MODEL, input: 'audio/pcm;rate=16000', output: 'audio/pcm;rate=24000' });
+      console.log('[AI Link Voice Audio] Voice session ready; audio diagnostics initialized.');
     } catch (error) {
       console.error('[AI Link Voice] Could not initialize session:', String(error?.message || error).slice(0, 300));
       safeSend(socket, { type: 'error', code: 'VOICE_UNAVAILABLE', error: 'Live voice service is temporarily unavailable.' });
