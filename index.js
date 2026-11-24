@@ -628,8 +628,12 @@ app.use((err, req, res, next) => {
 // START SERVER
 // =====================================================
 
-app.listen(PORT, () => {
+const server = app.listen(PORT, () => {
     console.log(`🚀 JARVIS RUNNING ON PORT ${PORT}`);
     console.log(`[Gemini] Configured API keys: ${API_KEYS.length}`);
     console.log(`[Gemini] Model: ${process.env.GEMINI_MODEL || "gemini-2.5-flash"}`);
 });
+
+// Attach the voice WebSocket directly to this HTTP server. This works even
+// when Render starts index.js via an explicit Start Command.
+require("./voiceGateway").attachVoiceGateway(server);
