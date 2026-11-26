@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert/strict');
-const { correlationId, requestMetrics, classifyProviderError, DEFAULT_MAX_PROMPT_CHARS } = require('../gateway-utils');
+const { correlationId, requestMetrics, classifyProviderError, DEFAULT_MAX_PROMPT_CHARS, buildProviderPrompt } = require('../gateway-utils');
 
 test('correlation IDs preserve safe supplied IDs and replace unsafe values', () => {
   assert.equal(correlationId('request-12345678'), 'request-12345678');
