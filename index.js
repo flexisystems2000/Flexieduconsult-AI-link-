@@ -183,6 +183,15 @@ async function callGemini(contents, isJson = false) {
                 );
                 console.error(`[Gemini] Provider details: ${providerDetails}`);
 
+                // A daily free-tier quota is exhausted until its reset window.
+                // Retrying the same key cannot help; rotate once to the next key.
+                const dailyQuotaExceeded =
+                    /GenerateRequestsPerDayPerModel-FreeTier|Generate content requests per day limit exceeded/i.test(providerDetails);
+                if (dailyQuotaExceeded) {
+                    console.warn("[Gemini] Daily free-tier quota exhausted; skipping retries for this key.");
+                    break;
+                }
+
                 // Retry temporary capacity, rate-limit and network failures.
                 const retryable =
                     !status ||
@@ -333,7 +342,7 @@ app.post("/ai", async (req, res) => {
             success: false, code: classified.code,
             error: classified.category === "provider_rate_limit" ? "AI provider rate limit reached" :
                 classified.category === "provider_timeout" ? "AI provider request timed out" : "AI processing failed",
-            providerStatus: err.status || err.response?.status || null, ...providerDiagnostic
+            providerStatus: err.status || err.response?.status || null, ...diagnostic
         });
     }
 });
