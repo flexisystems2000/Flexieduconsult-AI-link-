@@ -18,8 +18,16 @@ test('request metrics count prompt characters and serialized UTF-8 bytes', () =>
   assert.ok(metrics.model);
 });
 
-test('gateway keeps the documented 50,000 character prompt ceiling by default', () => {
-  assert.equal(DEFAULT_MAX_PROMPT_CHARS,50000);
+test('gateway enforces a 12,000 character complete provider prompt ceiling by default', () => {
+  assert.equal(DEFAULT_MAX_PROMPT_CHARS,12000);
+});
+
+test('provider prompt builder includes gateway instructions in the measured total', () => {
+  const prompt=buildProviderPrompt('hello','Jarvis');
+  assert.match(prompt,/You are JARVIS/);
+  assert.match(prompt,/NO LATEX/);
+  assert.match(prompt,/User:\\nhello$/);
+  assert.equal(buildProviderPrompt('x'.repeat(12000),'Jarvis').length>12000,true);
 });
 
 test('Gemini 429 is classified as provider rate limiting', () => {
