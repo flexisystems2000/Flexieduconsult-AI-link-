@@ -17,7 +17,7 @@ function requestMetrics(body = {}) {
     model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
   };
 }
-function classifyProviderError(error) {
+function buildProviderPrompt(prompt, botName) {\n  const personalities = {\n    Alexa: 'You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.',\n    Jarvis: 'You are JARVIS for Flexi Digital Academy. Be educational and technical.'\n  };\n  const identity = personalities[botName] || personalities.Jarvis;\n  return `${identity}\\n\\nNO LATEX.\\nUse Unicode symbols like:\\n√ π ± ² ³\\n\\nUser:\\n${String(prompt || 'Analyze this')}`;\n}\n\nfunction classifyProviderError(error) {
   const status = Number(error?.status || error?.response?.status || 0);
   const code = String(error?.code || '');
   if (status === 429) return { code: 'GEMINI_RATE_LIMIT', status: 429, category: 'provider_rate_limit' };
@@ -27,4 +27,4 @@ function classifyProviderError(error) {
   if (status >= 400) return { code: 'GEMINI_REQUEST_ERROR', status: 502, category: 'provider_request_error' };
   return { code: 'AI_PROVIDER_ERROR', status: 502, category: 'provider_network_error' };
 }
-module.exports = { DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_REQUEST_BYTES, correlationId, requestMetrics, classifyProviderError };
+module.exports = { DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_REQUEST_BYTES, correlationId, requestMetrics, classifyProviderError, buildProviderPrompt };
