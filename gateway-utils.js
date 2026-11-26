@@ -17,7 +17,15 @@ function requestMetrics(body = {}) {
     model: process.env.GEMINI_MODEL || 'gemini-2.5-flash'
   };
 }
-function buildProviderPrompt(prompt, botName) {\n  const personalities = {\n    Alexa: 'You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.',\n    Jarvis: 'You are JARVIS for Flexi Digital Academy. Be educational and technical.'\n  };\n  const identity = personalities[botName] || personalities.Jarvis;\n  return `${identity}\\n\\nNO LATEX.\\nUse Unicode symbols like:\\n√ π ± ² ³\\n\\nUser:\\n${String(prompt || 'Analyze this')}`;\n}\n\nfunction classifyProviderError(error) {
+function buildProviderPrompt(prompt, botName) {
+  const personalities = {
+    Alexa: 'You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.',
+    Jarvis: 'You are JARVIS for Flexi Digital Academy. Be educational and technical.'
+  };
+  const identity = personalities[botName] || personalities.Jarvis;
+  return identity + '\n\nNO LATEX.\nUse Unicode symbols like:\n√ π ± ² ³\n\nUser:\n' + String(prompt || 'Analyze this');
+}
+function classifyProviderError(error) {
   const status = Number(error?.status || error?.response?.status || 0);
   const code = String(error?.code || '');
   if (status === 429) return { code: 'GEMINI_RATE_LIMIT', status: 429, category: 'provider_rate_limit' };
