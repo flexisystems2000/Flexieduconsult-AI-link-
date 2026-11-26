@@ -287,10 +287,6 @@ app.post("/ai", async (req, res) => {
             console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "invalid_response_format" });
             return res.status(400).json({ success: false, code: "INVALID_RESPONSE_FORMAT", error: "responseFormat must be json or text", ...diagnostic });
         }
-        if (promptChars > MAX_PROMPT_CHARS) {
-            console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "prompt_character_budget", maxPromptChars: MAX_PROMPT_CHARS });
-            return res.status(413).json({ success: false, code: "PROMPT_TOO_LARGE", error: "Prompt exceeds the configured gateway prompt limit", maxPromptChars: MAX_PROMPT_CHARS, ...diagnostic });
-        }
         if (requestBytes > MAX_REQUEST_BYTES) {
             console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "serialized_request_budget", maxRequestBytes: MAX_REQUEST_BYTES });
             return res.status(413).json({ success: false, code: "REQUEST_TOO_LARGE", error: "Serialized AI request exceeds the configured request-size limit", maxRequestBytes: MAX_REQUEST_BYTES, ...diagnostic });
@@ -304,18 +300,25 @@ app.post("/ai", async (req, res) => {
             "Jarvis": "You are JARVIS for Flexi Digital Academy. Be educational and technical."
         };
         const identity = personalities[botName] || personalities["Jarvis"];
-        const parts = [{
-            text: `${identity}
+        // Enforce the 12,000-character budget on the exact complete text sent
+        // to Gemini, including gateway identity and formatting instructions.
+        const providerPrompt = `${identity}
 
 NO LATEX.
 Use Unicode symbols like:
 √ π ± ² ³
 
 User:
-${promptText}`
-        }];
+${promptText}`;
+        const providerPromptChars = providerPrompt.length;
+        const providerDiagnostic = { ...diagnostic, providerPromptChars, maxPromptChars: MAX_PROMPT_CHARS };
+        if (providerPromptChars > MAX_PROMPT_CHARS) {
+            console.warn("[AI Link] Pre-provider rejection", { ...providerDiagnostic, reason: "complete_provider_prompt_character_budget" });
+            return res.status(413).json({ success: false, code: "PROMPT_TOO_LARGE", error: "Complete provider prompt exceeds the 12000-character limit", ...providerDiagnostic });
+        }
+        const parts = [{ text: providerPrompt }];
         if (image) parts.push({ inline_data: { mime_type: "image/jpeg", data: image.replace(/^data:.*?;base64,/, "") } });
-        console.info("[AI Link] Provider request", diagnostic);
+        console.info("[AI Link] Provider request", providerDiagnostic);
         const result = await callGemini([{ parts }], wantsJson);
         if (wantsJson) {
             let parsed;
@@ -328,13 +331,13 @@ ${promptText}`
                 console.error("[AI Link] Structured response rejected", { ...diagnostic, reason: "not_json_object" });
                 return res.status(502).json({ success: false, code: "INVALID_STRUCTURED_RESPONSE", error: "AI provider returned an invalid JSON object", ...diagnostic });
             }
-            return res.json({ success: true, result: JSON.stringify(parsed), ...diagnostic });
+            return res.json({ success: true, result: JSON.stringify(parsed), ...providerDiagnostic });
         }
-        return res.json({ success: true, result: result || "No response received from the AI.", ...diagnostic });
+        return res.json({ success: true, result: result || "No response received from the AI.", ...providerDiagnostic });
     } catch (err) {
         const classified = classifyProviderError(err);
         console.error("[AI Link] Provider failure", {
-            ...diagnostic, errorCode: classified.code,
+            ...providerDiagnostic, errorCode: classified.code,
             providerStatus: err.status || err.response?.status || null,
             providerCode: err.code || null,
             providerMessage: String(err.message || "Provider request failed").slice(0, 500)
@@ -343,7 +346,7 @@ ${promptText}`
             success: false, code: classified.code,
             error: classified.category === "provider_rate_limit" ? "AI provider rate limit reached" :
                 classified.category === "provider_timeout" ? "AI provider request timed out" : "AI processing failed",
-            providerStatus: err.status || err.response?.status || null, ...diagnostic
+            providerStatus: err.status || err.response?.status || null, ...providerDiagnostic
         });
     }
 });
