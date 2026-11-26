@@ -337,7 +337,7 @@ ${promptText}`;
     } catch (err) {
         const classified = classifyProviderError(err);
         console.error("[AI Link] Provider failure", {
-            ...providerDiagnostic, errorCode: classified.code,
+            ...diagnostic, errorCode: classified.code,
             providerStatus: err.status || err.response?.status || null,
             providerCode: err.code || null,
             providerMessage: String(err.message || "Provider request failed").slice(0, 500)
