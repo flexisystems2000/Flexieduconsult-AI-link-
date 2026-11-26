@@ -26,7 +26,7 @@ test('provider prompt builder includes gateway instructions in the measured tota
   const prompt=buildProviderPrompt('hello','Jarvis');
   assert.match(prompt,/You are JARVIS/);
   assert.match(prompt,/NO LATEX/);
-  assert.match(prompt,/User:\\nhello$/);
+  assert.match(prompt,/User:\nhello$/);
   assert.equal(buildProviderPrompt('x'.repeat(12000),'Jarvis').length>12000,true);
 });
 
