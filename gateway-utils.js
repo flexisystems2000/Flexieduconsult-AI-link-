@@ -1,7 +1,7 @@
 'use strict';
 const crypto = require('crypto');
 
-const DEFAULT_MAX_PROMPT_CHARS = 50000;
+const DEFAULT_MAX_PROMPT_CHARS = 12000;
 const DEFAULT_MAX_REQUEST_BYTES = 12 * 1024 * 1024;
 
 function correlationId(value) {
