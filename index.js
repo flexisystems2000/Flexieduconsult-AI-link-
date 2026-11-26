@@ -3,7 +3,7 @@ require("dotenv").config();
 const express = require("express");
 const axios = require("axios");
 const { init: initPuter } = require("@heyputer/puter.js/src/init.cjs");
-const { DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_REQUEST_BYTES, correlationId, requestMetrics, classifyProviderError } = require("./gateway-utils");
+const { DEFAULT_MAX_PROMPT_CHARS, DEFAULT_MAX_REQUEST_BYTES, correlationId, requestMetrics, classifyProviderError, buildProviderPrompt } = require("./gateway-utils");
 
 // Puter AI image-generation client
 const puter = initPuter(process.env.PUTER_AUTH_TOKEN);
@@ -295,21 +295,8 @@ app.post("/ai", async (req, res) => {
             console.warn("[AI Link] Pre-provider rejection", { ...diagnostic, reason: "image_payload_budget" });
             return res.status(413).json({ success: false, code: "IMAGE_TOO_LARGE", error: "Image payload exceeds the 12 MB limit", ...diagnostic });
         }
-        const personalities = {
-            "Alexa": "You are Alexa, the official AI assistant for Flexi Digital Academy. Be professional, concise, and helpful.",
-            "Jarvis": "You are JARVIS for Flexi Digital Academy. Be educational and technical."
-        };
-        const identity = personalities[botName] || personalities["Jarvis"];
-        // Enforce the 12,000-character budget on the exact complete text sent
-        // to Gemini, including gateway identity and formatting instructions.
-        const providerPrompt = `${identity}
-
-NO LATEX.
-Use Unicode symbols like:
-√ π ± ² ³
-
-User:
-${promptText}`;
+        // Build and measure the exact complete text that will be sent to Gemini.
+        const providerPrompt = buildProviderPrompt(promptText, botName);
         const providerPromptChars = providerPrompt.length;
         const providerDiagnostic = { ...diagnostic, providerPromptChars, maxPromptChars: MAX_PROMPT_CHARS };
         if (providerPromptChars > MAX_PROMPT_CHARS) {
